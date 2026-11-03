@@ -1,0 +1,55 @@
+name: pr rules
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, edited]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  check:
+    if: >-
+      github.event.pull_request.state == 'open' &&
+      github.event.pull_request.author_association != 'OWNER' &&
+      github.event.pull_request.author_association != 'MEMBER'
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          BASE: ${{ github.event.pull_request.base.ref }}
+          COUNT: ${{ github.event.pull_request.changed_files }}
+        run: |
+          why=""
+          if [ "$BASE" != "dev" ]; then
+            why="PRs go to the dev branch, this one is against $BASE."
+          fi
+          if [ "$COUNT" -gt 3000 ]; then
+            why="$why It changes more than 3000 files, thats way too big to check."
+          fi
+          files=$(gh api "repos/$REPO/pulls/$PR/files?per_page=100" --paginate --jq '.[] | .filename, (.previous_filename // empty)')
+          if printf '%s\n' "$files" | grep -q '^\.github/'; then
+            why="$why It changes something in .github/, thats CI and these rules so only I change those."
+          fi
+          if printf '%s\n' "$files" | grep -qx 'goome\.h'; then
+            why="$why It changes goome.h in the root, that one gets made by tools/single.py. Change src/ and include/ instead and leave goome.h out of the PR (git checkout goome.h), I remake it after merging."
+          fi
+          if printf '%s\n' "$files" | grep -qxE 'get\.sh|get\.ps1'; then
+            why="$why It changes get.sh or get.ps1, those run on peoples computers when they install goome so only I touch them."
+          fi
+          if printf '%s\n' "$files" | grep -qxE 'LICENSE|docs/(logo\.png|logo\.svg|demo\.gif|screenshot\.png)'; then
+            why="$why It changes the LICENSE or the logo, demo or screenshot in docs/, only I change those."
+          fi
+          if [ -z "$why" ]; then
+            echo "follows the rules"
+            exit 0
+          fi
+          gh api "repos/$REPO/labels" -f name=rules-closed -f color=b60205 -f description="closed by the pr rules" >/dev/null 2>&1 || true
+          gh api "repos/$REPO/issues/$PR/comments" -f body="Closed automatically, sorry. $why Check [CONTRIBUTING.md](https://github.com/goome-ui/c-goome/blob/dev/CONTRIBUTING.md), fix it and open a new PR against dev." >/dev/null
+          gh api "repos/$REPO/issues/$PR/labels" -f "labels[]=rules-closed" >/dev/null
+          gh api -X PATCH "repos/$REPO/pulls/$PR" -f state=closed >/dev/null
+          echo "closed: $why"

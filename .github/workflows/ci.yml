@@ -1,0 +1,89 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: deps
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq gcc-mingw-w64-x86-64 xvfb xdotool x11-xserver-utils x11-utils x11-apps imagemagick picom sway swaybg grim wtype xwayland libwayland-dev libxkbcommon0 python3-pil
+      - name: one file is up to date
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          python3 tools/single.py
+          if [ "$EVENT" != "pull_request" ]; then git diff --exit-code goome.h; fi
+      - name: build + unit tests
+        run: WERROR=1 ./build.sh test
+      - name: glibc 2.34
+        run: |
+          for b in build/hello build/grab build/unit build/one; do
+            if objdump -T "$b" | grep -E 'GLIBC_2\.(3[5-9]|[4-9][0-9])\b'; then echo "$b needs a newer glibc"; exit 1; fi
+          done
+      - name: windows cross build
+        run: WERROR=1 ./build.sh win
+      - name: cmake
+        run: cmake -S . -B out -DCMAKE_BUILD_TYPE=Release && cmake --build out && ctest --test-dir out --output-on-failure
+      - name: x11
+        run: X11_SCRATCH=$PWD/ci-out/x11 bash tests/x11.sh
+      - name: wayland
+        run: SCRATCH=$PWD/ci-out/wayland WL_INCLUDE=/usr/include bash tests/wayland.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-shots
+          path: ci-out/
+          if-no-files-found: ignore
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: msvc
+        shell: pwsh
+        run: |
+          cmake -S . -B out
+          cmake --build out --config Release
+          ctest --test-dir out -C Release --output-on-failure
+      - name: mingw, no extra libs
+        shell: bash
+        run: |
+          CC=gcc WERROR=1 ./build.sh win
+          ./build-win/unit.exe
+          for t in win32_hit win32_hide; do gcc -std=c99 -O2 -Iinclude -o build-win/$t.exe tests/$t.c build-win/libgoome.a; done
+      - name: one file with cl
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" && cl /nologo /W3 /WX /I. examples\hello.c build-win\one.c /Fe:one-cl.exe"
+      - name: live desktop
+        shell: pwsh
+        run: ./tests/win32.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-shots
+          path: ci-out/
+          if-no-files-found: ignore
+
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: build + unit tests, no frameworks linked
+        run: WERROR=1 ./build.sh test
+      - name: one file
+        run: cc -std=c99 -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -I. -o one-file examples/hello.c build/one.c
+      - name: live
+        run: bash tests/macos.sh
