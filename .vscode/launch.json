@@ -1,0 +1,26 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "hello",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${command:cmake.launchTargetPath}",
+      "cwd": "${workspaceFolder}",
+      "MIMode": "gdb",
+      "osx": { "MIMode": "lldb" },
+      "windows": { "type": "cppvsdbg" }
+    },
+    {
+      "name": "hello (test backend)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${command:cmake.launchTargetPath}",
+      "cwd": "${workspaceFolder}",
+      "environment": [{ "name": "GOOME_TEST_SCRIPT", "value": "2 click 200,120; 3 click 200,190; 4 key hi; 8 key \\e" }],
+      "MIMode": "gdb",
+      "osx": { "MIMode": "lldb" },
+      "windows": { "type": "cppvsdbg" }
+    }
+  ]
+}
