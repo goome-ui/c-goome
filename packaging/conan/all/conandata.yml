@@ -1,0 +1,7 @@
+sources:
+  "0.3.0":
+    url: "https://github.com/goome-ui/c-goome/archive/refs/tags/v0.3.0.tar.gz"
+    sha256: "584e1d7c83dd7706470d24196b8bed8cd528125f1a82af279cf520d89b2ed2ad"
+  "0.4.0":
+    url: "https://github.com/goome-ui/c-goome/archive/refs/tags/v0.4.0.tar.gz"
+    sha256: "61bba0cae92be3ce6faf4f9d839334e0491df2b0376068da87bdcc283f0c6923"
