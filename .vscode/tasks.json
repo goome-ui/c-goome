@@ -1,0 +1,8 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    { "label": "build", "type": "cmake", "command": "build", "group": { "kind": "build", "isDefault": true } },
+    { "label": "test", "type": "cmake", "command": "test", "group": "test" },
+    { "label": "remake goome.h", "type": "shell", "command": "python3 tools/single.py", "windows": { "command": "py tools/single.py" } }
+  ]
+}

@@ -1,0 +1,210 @@
+name: ci
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: deps
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq gcc-mingw-w64-x86-64 xvfb xdotool x11-xserver-utils x11-utils x11-apps imagemagick picom sway swaybg grim wtype xwayland libwayland-dev libxkbcommon0 python3-pil xsel xfwm4 wl-clipboard weston
+      - name: one file is up to date
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          python3 tools/single.py
+          if [ "$EVENT" != "pull_request" ]; then git diff --exit-code goome.h; fi
+      - name: build + unit tests
+        run: WERROR=1 ./build.sh test
+      - name: glibc 2.34
+        run: |
+          for b in build/hello build/grab build/unit build/one; do
+            if objdump -T "$b" | grep -E 'GLIBC_2\.(3[5-9]|[4-9][0-9])\b'; then echo "$b needs a newer glibc"; exit 1; fi
+          done
+      - name: windows cross build
+        run: WERROR=1 ./build.sh win
+      - name: cmake
+        run: cmake -S . -B out -DCMAKE_BUILD_TYPE=Release && cmake --build out && ctest --test-dir out --output-on-failure
+      - name: backends (glfw, sdl, gl, win32 in wine)
+        run: |
+          sudo apt-get install -yq pkgconf libglfw3-dev libsdl2-dev libgl-dev libegl-dev libgles-dev libgl1-mesa-dri wine wine64
+          sudo apt-get install -yq libsdl3-dev || echo "no libsdl3-dev on this ubuntu, sdl3 gets skipped"
+          bash tests/backends.sh
+      - name: x11
+        run: X11_SCRATCH=$PWD/ci-out/x11 bash tests/x11.sh
+      - name: wayland
+        run: SCRATCH=$PWD/ci-out/wayland WL_INCLUDE=/usr/include bash tests/wayland.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-shots
+          path: ci-out/
+          if-no-files-found: ignore
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: msvc
+        shell: pwsh
+        run: |
+          cmake -S . -B out
+          cmake --build out --config Release
+          ctest --test-dir out -C Release --output-on-failure
+      - name: mingw, no extra libs
+        shell: bash
+        run: |
+          CC=gcc WERROR=1 ./build.sh win
+          ./build-win/unit.exe
+          for t in win32_hit win32_hide grab_ui win_game; do gcc -std=c99 -O2 -Iinclude -o build-win/$t.exe tests/$t.c build-win/libgoome.a; done
+          gcc -std=c99 -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -Werror -O2 -Iinclude -o build-win/winmode.exe tests/winmode.c build-win/libgoome.a
+      - name: one file with cl
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" && cl /nologo /W3 /WX /I. examples\hello.c build-win\one.c /Fe:one-cl.exe"
+      - name: backends (win32 + gl)
+        shell: bash
+        run: |
+          gcc -std=c99 -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -Werror -O1 -Iinclude -Ibackends -o build-win/win32_gl.exe tests/backends/win32_gl.c build-win/libgoome.a -lgdi32 -lopengl32
+          ./build-win/win32_gl.exe
+      - name: backends with cl
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" && cl /nologo /W3 /WX /I. /Ibackends tests\backends\win32_gl.c build-win\one.c user32.lib gdi32.lib opengl32.lib /Fe:backends-cl.exe"
+          ./backends-cl.exe
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: live desktop
+        shell: pwsh
+        run: ./tests/win32.ps1 -out ci-out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-shots
+          path: ci-out/
+          if-no-files-found: ignore
+
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: build + unit tests, no frameworks linked
+        run: WERROR=1 ./build.sh test
+      - name: one file
+        run: cc -std=c99 -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers -I. -o one-file examples/hello.c build/one.c
+      - name: live
+        run: bash tests/macos.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-shots-${{ matrix.os }}
+          path: build/mac-test/
+          if-no-files-found: ignore
+
+  gfx-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shaders match fxc
+        shell: pwsh
+        run: |
+          $fxc = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\fxc.exe" | Sort-Object FullName | Select-Object -Last 1
+          New-Item -ItemType Directory -Force cso | Out-Null
+          foreach ($p in "vs_4_0", "ps_4_0", "vs_5_0", "ps_5_0") {
+            & $fxc.FullName /nologo /O3 /T $p /E ($p.Substring(0, 2)) /Fo "cso\$p.cso" tests\gfx\quad.hlsl
+            if ($LASTEXITCODE) { exit 1 }
+          }
+          python tests/gfx/dxbc.py cso
+          git diff --stat --exit-code backends/
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fxc-shaders
+          path: cso/
+          if-no-files-found: ignore
+      - name: vulkan headers + lavapipe
+        shell: bash
+        run: |
+          git clone -q --depth 1 -b v1.3.296 https://github.com/KhronosGroup/Vulkan-Headers.git vkh
+          curl -sSLo mesa.7z https://github.com/pal1000/mesa-dist-win/releases/download/26.2.6/mesa3d-26.2.6-release-msvc.7z
+          7z x -omesa mesa.7z > /dev/null
+          ls mesa/x64 | grep -i -E "lvp|vulkan"
+      - name: build
+        shell: bash
+        run: |
+          CC=gcc WERROR=1 ./build.sh win
+          w="-std=c99 -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -Werror -O2 -Iinclude -Ivkh/include"
+          gcc $w -o build-win/gfx_dx9.exe tests/gfx/dx9.c build-win/libgoome.a -ld3d9
+          gcc $w -o build-win/gfx_dx11.exe tests/gfx/dx11.c build-win/libgoome.a -ld3d11
+          gcc $w -o build-win/gfx_dx12.exe tests/gfx/dx12.c build-win/libgoome.a -ld3d12 -ldxgi -ldxguid
+          gcc $w -o build-win/gfx_vulkan.exe tests/gfx/vulkan.c build-win/libgoome.a
+      - name: backends build with cl as c and c++
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          foreach ($b in "dx9", "dx11", "dx12", "vulkan") {
+            "#define GOOME_IMPL_$($b.ToUpper())_IMPLEMENTATION`n#include `"../backends/goome_$b.h`"" | Set-Content -Encoding ascii "build-win\cl_$b.c"
+            cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul && cl /nologo /W3 /WX /c /Iinclude /Ivkh\include build-win\cl_$b.c /Fobuild-win\cl_$b.obj && cl /nologo /W3 /WX /EHsc /c /TP /Iinclude /Ivkh\include build-win\cl_$b.c /Fobuild-win\cl_$b.cpp.obj"
+            if ($LASTEXITCODE) { exit 1 }
+          }
+      - name: d3d11 warp
+        shell: bash
+        run: ./build-win/gfx_dx11.exe warp
+      - name: d3d12 warp
+        shell: bash
+        run: ./build-win/gfx_dx12.exe warp
+      - name: d3d9
+        shell: bash
+        run: ./build-win/gfx_dx9.exe sw
+      - name: vulkan lavapipe
+        shell: bash
+        run: GOOME_VK_ICD="$PWD/mesa/x64/vulkan_lvp.dll" ./build-win/gfx_vulkan.exe
+
+  gfx-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: deps
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers
+      - name: vulkan on lavapipe with validation
+        run: |
+          WERROR=1 ./build.sh
+          cc -std=c99 -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -Werror -O2 -D_DEFAULT_SOURCE -Iinclude -o build/gfx_vulkan tests/gfx/vulkan.c build/libgoome.a -ldl -lm
+          c++ -std=c++11 -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -Werror -Iinclude -x c++ -c -o build/vk_cpp.o - <<'EOF2'
+          #define GOOME_IMPL_VULKAN_IMPLEMENTATION
+          #include "backends/goome_vulkan.h"
+          EOF2
+          export VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation
+          export VK_LAYER_ENABLES=VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT
+          export VK_ICD_FILENAMES=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json | head -1)
+          build/gfx_vulkan 2>&1 | tee vk.log
+          if grep -i -E "validation (error|warning)|VUID-|SYNC-HAZARD" vk.log; then exit 1; fi
+          grep -q PASS vk.log
+
+  gfx-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: metal offscreen readback
+        run: |
+          WERROR=1 ./build.sh
+          cc -std=c99 -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -Werror -O2 -Iinclude -o build/gfx_metal tests/gfx/metal.c build/libgoome.a
+          MTL_DEBUG_LAYER=1 build/gfx_metal
