@@ -1,0 +1,9 @@
+build/
+build-win/
+out/
+.vs/
+.idea/
+cmake-build-*/
+*.ppm
+__pycache__/
+test-out/

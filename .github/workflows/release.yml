@@ -1,0 +1,29 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: goome.h is up to date and says the right version
+        run: |
+          python3 tools/single.py
+          git diff --exit-code goome.h
+          grep -q "^#define GOOME_VERSION \"${TAG#v}\"" goome.h || { echo "goome.h isnt ${TAG#v}"; exit 1; }
+      - name: zip the backends
+        run: zip -qr "goome-backends-${TAG#v}.zip" backends
+      - name: upload
+        run: |
+          gh release view "$TAG" > /dev/null 2>&1 || gh release create "$TAG" --verify-tag --title "goome ${TAG#v}" --notes "goome ${TAG#v}"
+          gh release upload "$TAG" goome.h "goome-backends-${TAG#v}.zip" --clobber

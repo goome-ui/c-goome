@@ -1,0 +1,14 @@
+vcpkg_from_github(
+    OUT_SOURCE_PATH SOURCE_PATH
+    REPO goome-ui/c-goome
+    REF "v${VERSION}"
+    SHA512 654acfe87de2d2c92c38efc7e74f3a34a2a80e516caceae3891e8cff3714c5d50208ee87520ad5d0f4802aa1cb8b8e056b0e38cfb1c7ee82b6cecdfe6174ce50
+    HEAD_REF dev
+)
+
+file(INSTALL "${SOURCE_PATH}/goome.h" DESTINATION "${CURRENT_PACKAGES_DIR}/include")
+file(GLOB GOOME_BACKENDS "${SOURCE_PATH}/backends/*.h")
+file(INSTALL ${GOOME_BACKENDS} DESTINATION "${CURRENT_PACKAGES_DIR}/include")
+
+file(INSTALL "${CMAKE_CURRENT_LIST_DIR}/usage" DESTINATION "${CURRENT_PACKAGES_DIR}/share/${PORT}")
+vcpkg_install_copyright(FILE_LIST "${SOURCE_PATH}/LICENSE")

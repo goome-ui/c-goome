@@ -1,0 +1,18 @@
+# Maintainer: sevvy-wevvy <163466717+sevvy-wevvy@users.noreply.github.com>
+pkgname=goome
+pkgver=0.3.0
+pkgrel=1
+pkgdesc="Single header C library for see-through always on top overlays, app windows and offscreen ui"
+arch=('any')
+url="https://github.com/goome-ui/c-goome"
+license=('GPL-3.0-only')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/goome-ui/c-goome/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('584e1d7c83dd7706470d24196b8bed8cd528125f1a82af279cf520d89b2ed2ad')
+
+package() {
+  cd "c-goome-$pkgver"
+  install -Dm644 goome.h "$pkgdir/usr/include/goome.h"
+  install -Dm644 -t "$pkgdir/usr/include" backends/*.h
+  install -Dm644 backends/README.md "$pkgdir/usr/share/doc/$pkgname/backends.md"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+}
