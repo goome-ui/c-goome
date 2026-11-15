@@ -9,8 +9,8 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/C99-6fdc5f?style=flat-square&logo=c&logoColor=1b1d22&labelColor=6fdc5f" alt="C99">
-  <img src="https://img.shields.io/badge/one%20file-goome.h-1b1d22?style=flat-square&labelColor=6fdc5f" alt="one file">
+  <img src="https://goome-ui.github.io/docs/assets/badges/c99.svg" alt="C99">
+  <img src="https://goome-ui.github.io/docs/assets/badges/one-file-goome-h.svg" alt="one file">
   <img src="https://img.shields.io/badge/Linux-X11%20%2B%20Wayland-1b1d22?style=flat-square&logo=linux&logoColor=white" alt="Linux">
   <img src="https://img.shields.io/badge/Windows-10%20%2F%2011-1b1d22?style=flat-square&logo=windows11&logoColor=white" alt="Windows">
   <img src="https://img.shields.io/badge/macOS-14%2B-1b1d22?style=flat-square&logo=apple&logoColor=white" alt="macOS">
