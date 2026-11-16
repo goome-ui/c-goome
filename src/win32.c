@@ -1433,6 +1433,13 @@ static LRESULT CALLBACK w32w_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     case WM_SYSCOMMAND:
         if ((wp & 0xFFF0) == SC_KEYMENU && lp == 0) return 0;
         break;
+#ifndef GOOME_NO_UI
+    case WM_GETOBJECT: {
+        intptr_t r;
+        if (gm_uia_obj(g, h, (uintptr_t)wp, (intptr_t)lp, &r)) return (LRESULT)r;
+        break;
+    }
+#endif
     case WM_SETFOCUS:
     case WM_KILLFOCUS: {
         goome_event e;

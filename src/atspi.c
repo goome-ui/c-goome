@@ -49,7 +49,7 @@ static struct {
     unsigned (*it_put)(as_it *, int, const void *);
     unsigned (*it_open)(as_it *, int, const char *, as_it *);
     unsigned (*it_close)(as_it *, as_it *);
-} D;
+} as_lib;
 
 typedef struct {
     void *bus;
@@ -62,8 +62,8 @@ typedef struct {
 
 static int as_load(void)
 {
-    if (D.tried) return D.ok;
-    D.tried = 1;
+    if (as_lib.tried) return as_lib.ok;
+    as_lib.tried = 1;
     void *h = dlopen("libdbus-1.so.3", RTLD_NOW | RTLD_LOCAL);
     if (!h) h = dlopen("libdbus-1.so", RTLD_NOW | RTLD_LOCAL);
     if (!h) return 0;
@@ -71,37 +71,37 @@ static int as_load(void)
         void **p;
         const char *n;
     } f[] = {
-        {(void **)&D.err_init, "dbus_error_init"}, {(void **)&D.err_free, "dbus_error_free"}, {(void **)&D.bus_get, "dbus_bus_get_private"},
-        {(void **)&D.open, "dbus_connection_open_private"}, {(void **)&D.reg, "dbus_bus_register"}, {(void **)&D.unique, "dbus_bus_get_unique_name"},
-        {(void **)&D.no_exit, "dbus_connection_set_exit_on_disconnect"}, {(void **)&D.close, "dbus_connection_close"}, {(void **)&D.unref, "dbus_connection_unref"},
-        {(void **)&D.rw, "dbus_connection_read_write"}, {(void **)&D.pop, "dbus_connection_pop_message"}, {(void **)&D.send, "dbus_connection_send"},
-        {(void **)&D.flush, "dbus_connection_flush"}, {(void **)&D.call, "dbus_connection_send_with_reply_and_block"},
-        {(void **)&D.m_call, "dbus_message_new_method_call"}, {(void **)&D.m_ret, "dbus_message_new_method_return"}, {(void **)&D.m_err, "dbus_message_new_error"},
-        {(void **)&D.m_sig, "dbus_message_new_signal"}, {(void **)&D.m_unref, "dbus_message_unref"}, {(void **)&D.m_type, "dbus_message_get_type"},
-        {(void **)&D.m_path, "dbus_message_get_path"}, {(void **)&D.m_iface, "dbus_message_get_interface"}, {(void **)&D.m_member, "dbus_message_get_member"},
-        {(void **)&D.it_init, "dbus_message_iter_init"}, {(void **)&D.it_type, "dbus_message_iter_get_arg_type"}, {(void **)&D.it_get, "dbus_message_iter_get_basic"},
-        {(void **)&D.it_next, "dbus_message_iter_next"}, {(void **)&D.it_rec, "dbus_message_iter_recurse"}, {(void **)&D.it_app, "dbus_message_iter_init_append"},
-        {(void **)&D.it_put, "dbus_message_iter_append_basic"}, {(void **)&D.it_open, "dbus_message_iter_open_container"},
-        {(void **)&D.it_close, "dbus_message_iter_close_container"},
+        {(void **)&as_lib.err_init, "dbus_error_init"}, {(void **)&as_lib.err_free, "dbus_error_free"}, {(void **)&as_lib.bus_get, "dbus_bus_get_private"},
+        {(void **)&as_lib.open, "dbus_connection_open_private"}, {(void **)&as_lib.reg, "dbus_bus_register"}, {(void **)&as_lib.unique, "dbus_bus_get_unique_name"},
+        {(void **)&as_lib.no_exit, "dbus_connection_set_exit_on_disconnect"}, {(void **)&as_lib.close, "dbus_connection_close"}, {(void **)&as_lib.unref, "dbus_connection_unref"},
+        {(void **)&as_lib.rw, "dbus_connection_read_write"}, {(void **)&as_lib.pop, "dbus_connection_pop_message"}, {(void **)&as_lib.send, "dbus_connection_send"},
+        {(void **)&as_lib.flush, "dbus_connection_flush"}, {(void **)&as_lib.call, "dbus_connection_send_with_reply_and_block"},
+        {(void **)&as_lib.m_call, "dbus_message_new_method_call"}, {(void **)&as_lib.m_ret, "dbus_message_new_method_return"}, {(void **)&as_lib.m_err, "dbus_message_new_error"},
+        {(void **)&as_lib.m_sig, "dbus_message_new_signal"}, {(void **)&as_lib.m_unref, "dbus_message_unref"}, {(void **)&as_lib.m_type, "dbus_message_get_type"},
+        {(void **)&as_lib.m_path, "dbus_message_get_path"}, {(void **)&as_lib.m_iface, "dbus_message_get_interface"}, {(void **)&as_lib.m_member, "dbus_message_get_member"},
+        {(void **)&as_lib.it_init, "dbus_message_iter_init"}, {(void **)&as_lib.it_type, "dbus_message_iter_get_arg_type"}, {(void **)&as_lib.it_get, "dbus_message_iter_get_basic"},
+        {(void **)&as_lib.it_next, "dbus_message_iter_next"}, {(void **)&as_lib.it_rec, "dbus_message_iter_recurse"}, {(void **)&as_lib.it_app, "dbus_message_iter_init_append"},
+        {(void **)&as_lib.it_put, "dbus_message_iter_append_basic"}, {(void **)&as_lib.it_open, "dbus_message_iter_open_container"},
+        {(void **)&as_lib.it_close, "dbus_message_iter_close_container"},
     };
     for (size_t i = 0; i < sizeof(f) / sizeof(f[0]); i++) {
         *f[i].p = dlsym(h, f[i].n);
         if (!*f[i].p) return 0;
     }
-    D.ok = 1;
+    as_lib.ok = 1;
     return 1;
 }
 
-static void as_s(as_it *it, const char *s) { D.it_put(it, 's', &s); }
-static void as_o(as_it *it, const char *s) { D.it_put(it, 'o', &s); }
-static void as_i(as_it *it, int v) { D.it_put(it, 'i', &v); }
-static void as_u(as_it *it, uint32_t v) { D.it_put(it, 'u', &v); }
+static void as_s(as_it *it, const char *s) { as_lib.it_put(it, 's', &s); }
+static void as_o(as_it *it, const char *s) { as_lib.it_put(it, 'o', &s); }
+static void as_i(as_it *it, int v) { as_lib.it_put(it, 'i', &v); }
+static void as_u(as_it *it, uint32_t v) { as_lib.it_put(it, 'u', &v); }
 static void as_b(as_it *it, int v)
 {
     uint32_t b = v != 0;
-    D.it_put(it, 'b', &b);
+    as_lib.it_put(it, 'b', &b);
 }
-static void as_d(as_it *it, double v) { D.it_put(it, 'd', &v); }
+static void as_d(as_it *it, double v) { as_lib.it_put(it, 'd', &v); }
 
 static void as_path(char *out, size_t cap, int i, const gm_ax *a)
 {
@@ -116,19 +116,19 @@ static void as_ref(as_it *it, as_st *s, const gm_ax *a, int i)
     as_it r;
     char p[96];
     as_path(p, sizeof(p), i, a);
-    D.it_open(it, 'r', NULL, &r);
+    as_lib.it_open(it, 'r', NULL, &r);
     as_s(&r, s->me);
     as_o(&r, p);
-    D.it_close(it, &r);
+    as_lib.it_close(it, &r);
 }
 
 static void as_desk(as_it *it, as_st *s)
 {
     as_it r;
-    D.it_open(it, 'r', NULL, &r);
+    as_lib.it_open(it, 'r', NULL, &r);
     as_s(&r, s->desk[0] ? s->desk : s->me);
     as_o(&r, s->desk[0] ? s->dpath : "/org/a11y/atspi/null");
-    D.it_close(it, &r);
+    as_lib.it_close(it, &r);
 }
 
 static int as_obj(const gm_ax *a, const char *path)
@@ -291,7 +291,7 @@ static void as_ifaces(as_it *it, const gm_ax *a, int i)
     as_it r;
     const char *names[2] = {NULL, NULL};
     int verbs[2] = {0, 0};
-    D.it_open(it, 'a', "s", &r);
+    as_lib.it_open(it, 'a', "s", &r);
     as_s(&r, AS_IF "Accessible");
     if (i == -2) as_s(&r, AS_IF "Application");
     else as_s(&r, AS_IF "Component");
@@ -299,7 +299,7 @@ static void as_ifaces(as_it *it, const gm_ax *a, int i)
     if (i >= 0 && (a->x[i].kind & GM_AXK_RANGE)) as_s(&r, AS_IF "Value");
     if (as_is_text(a, i)) as_s(&r, AS_IF "Text");
     if (i >= 0 && a->n[i].role == GOOME_ROLE_INPUT && (a->x[i].kind & GM_AXK_EDITABLE)) as_s(&r, AS_IF "EditableText");
-    D.it_close(it, &r);
+    as_lib.it_close(it, &r);
 }
 
 static void as_origin(goome *g, double *ox, double *oy, double *sc)
@@ -336,9 +336,9 @@ static int as_at(goome *g, const gm_ax *a, int x, int y, uint32_t coord)
 static void as_var_s(as_it *it, const char *s)
 {
     as_it v;
-    D.it_open(it, 'v', "s", &v);
+    as_lib.it_open(it, 'v', "s", &v);
     as_s(&v, s);
-    D.it_close(it, &v);
+    as_lib.it_close(it, &v);
 }
 
 static void as_name(const gm_ax *a, int i, goome *g, char *out, size_t cap)
@@ -361,14 +361,14 @@ static int as_prop(goome *g, as_st *s, const gm_ax *a, int i, const char *iface,
             snprintf(t, sizeof(t), "%u", i >= 0 ? (unsigned)a->n[i].id : 0u);
             as_var_s(it, i >= 0 ? t : "");
         } else if (!strcmp(prop, "ChildCount")) {
-            D.it_open(it, 'v', "i", &v);
+            as_lib.it_open(it, 'v', "i", &v);
             as_i(&v, as_kids(a, i, NULL, 0));
-            D.it_close(it, &v);
+            as_lib.it_close(it, &v);
         } else if (!strcmp(prop, "Parent")) {
-            D.it_open(it, 'v', "(so)", &v);
+            as_lib.it_open(it, 'v', "(so)", &v);
             if (i == -2) as_desk(&v, s);
             else as_ref(&v, s, a, i == -1 ? -2 : a->n[i].parent);
-            D.it_close(it, &v);
+            as_lib.it_close(it, &v);
         } else
             return 0;
         return 1;
@@ -378,9 +378,9 @@ static int as_prop(goome *g, as_st *s, const gm_ax *a, int i, const char *iface,
         else if (!strcmp(prop, "Version")) as_var_s(it, GOOME_VERSION);
         else if (!strcmp(prop, "AtspiVersion")) as_var_s(it, "2.1");
         else if (!strcmp(prop, "Id")) {
-            D.it_open(it, 'v', "i", &v);
+            as_lib.it_open(it, 'v', "i", &v);
             as_i(&v, s->app_id);
-            D.it_close(it, &v);
+            as_lib.it_close(it, &v);
         } else
             return 0;
         return 1;
@@ -394,25 +394,25 @@ static int as_prop(goome *g, as_st *s, const gm_ax *a, int i, const char *iface,
         double d = !strcmp(prop, "MinimumValue") ? n->min : !strcmp(prop, "MaximumValue") ? n->max : !strcmp(prop, "CurrentValue") ? n->num : 0;
         if (!strcmp(prop, "MinimumIncrement")) d = n->max > n->min && n->max - n->min >= 2 ? 1 : 0;
         else if (strcmp(prop, "MinimumValue") && strcmp(prop, "MaximumValue") && strcmp(prop, "CurrentValue")) return 0;
-        D.it_open(it, 'v', "d", &v);
+        as_lib.it_open(it, 'v', "d", &v);
         as_d(&v, d);
-        D.it_close(it, &v);
+        as_lib.it_close(it, &v);
         return 1;
     }
     if (!strcmp(iface, AS_IF "Action") && i >= 0 && !strcmp(prop, "NActions")) {
         const char *names[2] = {NULL, NULL};
         int verbs[2] = {0, 0};
-        D.it_open(it, 'v', "i", &v);
+        as_lib.it_open(it, 'v', "i", &v);
         as_i(&v, as_acts(a, i, names, verbs));
-        D.it_close(it, &v);
+        as_lib.it_close(it, &v);
         return 1;
     }
     if (!strcmp(iface, AS_IF "Text") && as_is_text(a, i) && (!strcmp(prop, "CharacterCount") || !strcmp(prop, "CaretOffset"))) {
         int len;
         const char *x = as_text(a, i, &len);
-        D.it_open(it, 'v', "i", &v);
+        as_lib.it_open(it, 'v', "i", &v);
         as_i(&v, !strcmp(prop, "CharacterCount") ? gm_ax_chars(x, len) : a->n[i].role == GOOME_ROLE_INPUT ? a->n[i].caret : 0);
-        D.it_close(it, &v);
+        as_lib.it_close(it, &v);
         return 1;
     }
     return 0;
@@ -428,32 +428,32 @@ static void as_all(goome *g, as_st *s, const gm_ax *a, int i, const char *iface,
     const char *const *l = !strcmp(iface, AS_IF "Accessible") ? acc : !strcmp(iface, AS_IF "Application") ? app : !strcmp(iface, AS_IF "Value") ? val
                          : !strcmp(iface, AS_IF "Action") ? act : !strcmp(iface, AS_IF "Text") ? txt : NULL;
     as_it r;
-    D.it_open(it, 'a', "{sv}", &r);
+    as_lib.it_open(it, 'a', "{sv}", &r);
     for (int k = 0; l && l[k]; k++) {
         as_it e;
-        D.it_open(&r, 'e', NULL, &e);
+        as_lib.it_open(&r, 'e', NULL, &e);
         as_s(&e, l[k]);
         if (!as_prop(g, s, a, i, iface, l[k], &e)) as_var_s(&e, "");
-        D.it_close(&r, &e);
+        as_lib.it_close(&r, &e);
     }
-    D.it_close(it, &r);
+    as_lib.it_close(it, &r);
 }
 
 static int as_arg(void *m, int idx, int type, void *out)
 {
     as_it it;
-    if (!D.it_init(m, &it)) return 0;
+    if (!as_lib.it_init(m, &it)) return 0;
     for (int k = 0; k < idx; k++)
-        if (!D.it_next(&it)) return 0;
-    if (D.it_type(&it) == 'v') {
+        if (!as_lib.it_next(&it)) return 0;
+    if (as_lib.it_type(&it) == 'v') {
         as_it v;
-        D.it_rec(&it, &v);
-        if (D.it_type(&v) != type) return 0;
-        D.it_get(&v, out);
+        as_lib.it_rec(&it, &v);
+        if (as_lib.it_type(&v) != type) return 0;
+        as_lib.it_get(&v, out);
         return 1;
     }
-    if (D.it_type(&it) != type) return 0;
-    D.it_get(&it, out);
+    if (as_lib.it_type(&it) != type) return 0;
+    as_lib.it_get(&it, out);
     return 1;
 }
 
@@ -508,25 +508,25 @@ static void as_ranged(as_it *it, const char *t, int len, int a0, int a1)
 static void *as_handle(goome *g, as_st *s, void *m)
 {
     gm_ax *a = g->ax;
-    const char *iface = D.m_iface(m), *mem = D.m_member(m);
-    if (!iface || !mem) return D.m_err(m, "org.freedesktop.DBus.Error.UnknownMethod", "no interface");
-    if (!strcmp(iface, "org.freedesktop.DBus.Peer")) return D.m_ret(m);
-    const char *path = D.m_path(m);
+    const char *iface = as_lib.m_iface(m), *mem = as_lib.m_member(m);
+    if (!iface || !mem) return as_lib.m_err(m, "org.freedesktop.DBus.Error.UnknownMethod", "no interface");
+    if (!strcmp(iface, "org.freedesktop.DBus.Peer")) return as_lib.m_ret(m);
+    const char *path = as_lib.m_path(m);
     if (path && !strcmp(path, "/org/a11y/atspi/cache") && !strcmp(mem, "GetItems")) {
-        void *r = D.m_ret(m);
+        void *r = as_lib.m_ret(m);
         as_it it, c;
         if (!r) return NULL;
-        D.it_app(r, &it);
-        D.it_open(&it, 'a', "((so)(so)(so)iiassusau)", &c);
-        D.it_close(&it, &c);
+        as_lib.it_app(r, &it);
+        as_lib.it_open(&it, 'a', "((so)(so)(so)iiassusau)", &c);
+        as_lib.it_close(&it, &c);
         return r;
     }
     int i = as_obj(a, path);
-    if (i == -3) return D.m_err(m, "org.freedesktop.DBus.Error.UnknownObject", "that one is gone");
-    void *r = D.m_ret(m);
+    if (i == -3) return as_lib.m_err(m, "org.freedesktop.DBus.Error.UnknownObject", "that one is gone");
+    void *r = as_lib.m_ret(m);
     if (!r) return NULL;
     as_it it, c;
-    D.it_app(r, &it);
+    as_lib.it_app(r, &it);
     char t[160];
     if (!strcmp(iface, "org.freedesktop.DBus.Properties")) {
         const char *pi = NULL, *pn = NULL;
@@ -559,12 +559,12 @@ static void *as_handle(goome *g, as_st *s, void *m)
             return r;
         }
         if (!strcmp(mem, "GetChildren")) {
-            D.it_open(&it, 'a', "(so)", &c);
+            as_lib.it_open(&it, 'a', "(so)", &c);
             if (i == -2) as_ref(&c, s, a, -1);
             else
                 for (int j = 0; j < a->count; j++)
                     if (a->n[j].parent == i) as_ref(&c, s, a, j);
-            D.it_close(&it, &c);
+            as_lib.it_close(&it, &c);
             return r;
         }
         if (!strcmp(mem, "GetIndexInParent")) {
@@ -576,8 +576,8 @@ static void *as_handle(goome *g, as_st *s, void *m)
             return r;
         }
         if (!strcmp(mem, "GetRelationSet")) {
-            D.it_open(&it, 'a', "(ua(so))", &c);
-            D.it_close(&it, &c);
+            as_lib.it_open(&it, 'a', "(ua(so))", &c);
+            as_lib.it_close(&it, &c);
             return r;
         }
         if (!strcmp(mem, "GetRole")) {
@@ -591,19 +591,19 @@ static void *as_handle(goome *g, as_st *s, void *m)
         if (!strcmp(mem, "GetState")) {
             uint32_t st[2];
             as_states(a, i, st);
-            D.it_open(&it, 'a', "u", &c);
+            as_lib.it_open(&it, 'a', "u", &c);
             as_u(&c, st[0]), as_u(&c, st[1]);
-            D.it_close(&it, &c);
+            as_lib.it_close(&it, &c);
             return r;
         }
         if (!strcmp(mem, "GetAttributes")) {
             as_it e;
-            D.it_open(&it, 'a', "{ss}", &c);
-            D.it_open(&c, 'e', NULL, &e);
+            as_lib.it_open(&it, 'a', "{ss}", &c);
+            as_lib.it_open(&c, 'e', NULL, &e);
             as_s(&e, "toolkit");
             as_s(&e, "goome");
-            D.it_close(&c, &e);
-            D.it_close(&it, &c);
+            as_lib.it_close(&c, &e);
+            as_lib.it_close(&it, &c);
             return r;
         }
         if (!strcmp(mem, "GetApplication")) {
@@ -623,9 +623,9 @@ static void *as_handle(goome *g, as_st *s, void *m)
         int box[4];
         if (!strcmp(mem, "GetExtents")) {
             as_box(g, a, i, (uint32_t)as_int(m, 0), box);
-            D.it_open(&it, 'r', NULL, &c);
+            as_lib.it_open(&it, 'r', NULL, &c);
             for (int k = 0; k < 4; k++) as_i(&c, box[k]);
-            D.it_close(&it, &c);
+            as_lib.it_close(&it, &c);
             return r;
         }
         if (!strcmp(mem, "GetPosition") || !strcmp(mem, "GetSize")) {
@@ -650,7 +650,7 @@ static void *as_handle(goome *g, as_st *s, void *m)
         }
         if (!strcmp(mem, "GetMDIZOrder")) {
             int16_t z = 0;
-            D.it_put(&it, 'n', &z);
+            as_lib.it_put(&it, 'n', &z);
             return r;
         }
         if (!strcmp(mem, "GetAlpha")) {
@@ -671,13 +671,13 @@ static void *as_handle(goome *g, as_st *s, void *m)
         int verbs[2] = {0, 0}, n = as_acts(a, i, names, verbs), k = as_int(m, 0);
         if (!strcmp(mem, "GetActions")) {
             as_it e;
-            D.it_open(&it, 'a', "(sss)", &c);
+            as_lib.it_open(&it, 'a', "(sss)", &c);
             for (int j = 0; j < n; j++) {
-                D.it_open(&c, 'r', NULL, &e);
+                as_lib.it_open(&c, 'r', NULL, &e);
                 as_s(&e, names[j]), as_s(&e, names[j]), as_s(&e, "");
-                D.it_close(&c, &e);
+                as_lib.it_close(&c, &e);
             }
-            D.it_close(&it, &c);
+            as_lib.it_close(&it, &c);
             return r;
         }
         if (!strcmp(mem, "GetName") || !strcmp(mem, "GetLocalizedName") || !strcmp(mem, "GetDescription")) {
@@ -739,8 +739,8 @@ static void *as_handle(goome *g, as_st *s, void *m)
             return r;
         }
         if (!strcmp(mem, "GetAttributes") || !strcmp(mem, "GetAttributeRun") || !strcmp(mem, "GetDefaultAttributes") || !strcmp(mem, "GetDefaultAttributeSet")) {
-            D.it_open(&it, 'a', "{ss}", &c);
-            D.it_close(&it, &c);
+            as_lib.it_open(&it, 'a', "{ss}", &c);
+            as_lib.it_close(&it, &c);
             if (mem[3] == 'A') as_i(&it, 0), as_i(&it, n);
             return r;
         }
@@ -763,39 +763,39 @@ static void *as_handle(goome *g, as_st *s, void *m)
             return r;
         }
     }
-    D.m_unref(r);
+    as_lib.m_unref(r);
     snprintf(t, sizeof(t), "goome has no %s.%s here", iface, mem);
-    return D.m_err(m, "org.freedesktop.DBus.Error.UnknownMethod", t);
+    return as_lib.m_err(m, "org.freedesktop.DBus.Error.UnknownMethod", t);
 }
 
 static void as_emit(as_st *s, const gm_ax *a, int i, const char *iface, const char *member, const char *detail, int d1, int d2, int kind, const void *any)
 {
     char p[96];
     as_path(p, sizeof(p), i, a);
-    void *m = D.m_sig(p, iface, member);
+    void *m = as_lib.m_sig(p, iface, member);
     if (!m) return;
     as_it it, v, e;
-    D.it_app(m, &it);
+    as_lib.it_app(m, &it);
     as_s(&it, detail);
     as_i(&it, d1), as_i(&it, d2);
     if (kind == 's') {
-        D.it_open(&it, 'v', "s", &v);
+        as_lib.it_open(&it, 'v', "s", &v);
         as_s(&v, (const char *)any);
     } else if (kind == 'r') {
-        D.it_open(&it, 'v', "(so)", &v);
-        D.it_open(&v, 'r', NULL, &e);
+        as_lib.it_open(&it, 'v', "(so)", &v);
+        as_lib.it_open(&v, 'r', NULL, &e);
         as_s(&e, s->me);
         as_o(&e, (const char *)any);
-        D.it_close(&v, &e);
+        as_lib.it_close(&v, &e);
     } else {
-        D.it_open(&it, 'v', "i", &v);
+        as_lib.it_open(&it, 'v', "i", &v);
         as_i(&v, 0);
     }
-    D.it_close(&it, &v);
-    D.it_open(&it, 'a', "{sv}", &v);
-    D.it_close(&it, &v);
-    D.send(s->bus, m, NULL);
-    D.m_unref(m);
+    as_lib.it_close(&it, &v);
+    as_lib.it_open(&it, 'a', "{sv}", &v);
+    as_lib.it_close(&it, &v);
+    as_lib.send(s->bus, m, NULL);
+    as_lib.m_unref(m);
 }
 
 static void as_state(as_st *s, const gm_ax *a, int i, const char *what, int on) { as_emit(s, a, i, AS_IF "Event.Object", "StateChanged", what, on, 0, 0, NULL); }
@@ -880,23 +880,23 @@ static char *as_addr(void)
     const char *e = gm_env("AT_SPI_BUS_ADDRESS");
     if (e) return strdup(e);
     as_err err;
-    D.err_init(&err);
-    void *sb = D.bus_get(0, &err);
+    as_lib.err_init(&err);
+    void *sb = as_lib.bus_get(0, &err);
     if (!sb) {
-        D.err_free(&err);
+        as_lib.err_free(&err);
         return NULL;
     }
-    D.no_exit(sb, 0);
+    as_lib.no_exit(sb, 0);
     char *out = NULL;
-    void *m = D.m_call("org.a11y.Bus", "/org/a11y/bus", "org.a11y.Bus", "GetAddress");
-    void *r = m ? D.call(sb, m, 1500, &err) : NULL;
+    void *m = as_lib.m_call("org.a11y.Bus", "/org/a11y/bus", "org.a11y.Bus", "GetAddress");
+    void *r = m ? as_lib.call(sb, m, 1500, &err) : NULL;
     const char *s = NULL;
     if (r && as_arg(r, 0, 's', (void *)&s) && s && *s) out = strdup(s);
-    if (r) D.m_unref(r);
-    if (m) D.m_unref(m);
-    D.err_free(&err);
-    D.close(sb);
-    D.unref(sb);
+    if (r) as_lib.m_unref(r);
+    if (m) as_lib.m_unref(m);
+    as_lib.err_free(&err);
+    as_lib.close(sb);
+    as_lib.unref(sb);
     return out;
 }
 
@@ -906,54 +906,54 @@ int gm_axp_open(goome *g)
     char *addr = as_addr();
     if (!addr) return -1;
     as_err err;
-    D.err_init(&err);
-    void *bus = D.open(addr, &err);
+    as_lib.err_init(&err);
+    void *bus = as_lib.open(addr, &err);
     free(addr);
     if (!bus) {
-        D.err_free(&err);
+        as_lib.err_free(&err);
         return -1;
     }
-    D.no_exit(bus, 0);
-    if (!D.reg(bus, &err)) {
-        D.err_free(&err);
-        D.close(bus);
-        D.unref(bus);
+    as_lib.no_exit(bus, 0);
+    if (!as_lib.reg(bus, &err)) {
+        as_lib.err_free(&err);
+        as_lib.close(bus);
+        as_lib.unref(bus);
         return -1;
     }
     as_st *s = calloc(1, sizeof(*s));
     if (!s) {
-        D.close(bus);
-        D.unref(bus);
+        as_lib.close(bus);
+        as_lib.unref(bus);
         return -1;
     }
     s->bus = bus;
-    snprintf(s->me, sizeof(s->me), "%s", D.unique(bus) ? D.unique(bus) : "");
+    snprintf(s->me, sizeof(s->me), "%s", as_lib.unique(bus) ? as_lib.unique(bus) : "");
     g->ax->plat = s;
-    void *m = D.m_call("org.a11y.atspi.Registry", AS_PRE "root", AS_IF "Socket", "Embed");
+    void *m = as_lib.m_call("org.a11y.atspi.Registry", AS_PRE "root", AS_IF "Socket", "Embed");
     if (m) {
         as_it it, r;
-        D.it_app(m, &it);
-        D.it_open(&it, 'r', NULL, &r);
+        as_lib.it_app(m, &it);
+        as_lib.it_open(&it, 'r', NULL, &r);
         as_s(&r, s->me);
         as_o(&r, AS_PRE "root");
-        D.it_close(&it, &r);
-        void *rep = D.call(bus, m, 1500, &err);
-        D.m_unref(m);
+        as_lib.it_close(&it, &r);
+        void *rep = as_lib.call(bus, m, 1500, &err);
+        as_lib.m_unref(m);
         if (rep) {
             as_it ri, st;
-            if (D.it_init(rep, &ri) && D.it_type(&ri) == 'r') {
+            if (as_lib.it_init(rep, &ri) && as_lib.it_type(&ri) == 'r') {
                 const char *dn = NULL, *dp = NULL;
-                D.it_rec(&ri, &st);
-                if (D.it_type(&st) == 's') D.it_get(&st, (void *)&dn);
-                D.it_next(&st);
-                if (D.it_type(&st) == 'o') D.it_get(&st, (void *)&dp);
+                as_lib.it_rec(&ri, &st);
+                if (as_lib.it_type(&st) == 's') as_lib.it_get(&st, (void *)&dn);
+                as_lib.it_next(&st);
+                if (as_lib.it_type(&st) == 'o') as_lib.it_get(&st, (void *)&dp);
                 if (dn && dp) snprintf(s->desk, sizeof(s->desk), "%s", dn), snprintf(s->dpath, sizeof(s->dpath), "%s", dp);
             }
-            D.m_unref(rep);
+            as_lib.m_unref(rep);
         }
     }
-    D.err_free(&err);
-    D.flush(bus);
+    as_lib.err_free(&err);
+    as_lib.flush(bus);
     return 0;
 }
 
@@ -961,17 +961,17 @@ int gm_axp_pump(goome *g)
 {
     as_st *s = g->ax->plat;
     if (!s) return -1;
-    D.rw(s->bus, 0);
+    as_lib.rw(s->bus, 0);
     void *m;
     int n = 0;
-    while (n++ < 256 && (m = D.pop(s->bus))) {
-        if (D.m_type(m) == 1) {
+    while (n++ < 256 && (m = as_lib.pop(s->bus))) {
+        if (as_lib.m_type(m) == 1) {
             void *r = as_handle(g, s, m);
-            if (r) D.send(s->bus, r, NULL), D.m_unref(r);
+            if (r) as_lib.send(s->bus, r, NULL), as_lib.m_unref(r);
         }
-        D.m_unref(m);
+        as_lib.m_unref(m);
     }
-    D.flush(s->bus);
+    as_lib.flush(s->bus);
     return 30;
 }
 
@@ -980,21 +980,21 @@ void gm_axp_close(goome *g)
     as_st *s = g->ax->plat;
     if (!s) return;
     if (s->desk[0]) {
-        void *m = D.m_call("org.a11y.atspi.Registry", AS_PRE "root", AS_IF "Socket", "Unembed");
+        void *m = as_lib.m_call("org.a11y.atspi.Registry", AS_PRE "root", AS_IF "Socket", "Unembed");
         if (m) {
             as_it it, r;
-            D.it_app(m, &it);
-            D.it_open(&it, 'r', NULL, &r);
+            as_lib.it_app(m, &it);
+            as_lib.it_open(&it, 'r', NULL, &r);
             as_s(&r, s->me);
             as_o(&r, AS_PRE "root");
-            D.it_close(&it, &r);
-            D.send(s->bus, m, NULL);
-            D.m_unref(m);
+            as_lib.it_close(&it, &r);
+            as_lib.send(s->bus, m, NULL);
+            as_lib.m_unref(m);
         }
     }
-    D.flush(s->bus);
-    D.close(s->bus);
-    D.unref(s->bus);
+    as_lib.flush(s->bus);
+    as_lib.close(s->bus);
+    as_lib.unref(s->bus);
     free(s);
     g->ax->plat = NULL;
 }

@@ -116,7 +116,7 @@ typedef struct gm_ax_s {
     goome_a11y_node *n, *pn;
     gm_ax_x *x, *px;
     char *text, *ptext;
-    int count, pcount, cap, pcap, ntext, tcap, pntext, ptcap, active, pactive, synced;
+    int count, pcount, cap, pcap, ntext, tcap, pntext, ptcap, active, pactive, synced, serial;
     uint32_t *hash;
     int hcap;
     char *long_text;
@@ -134,6 +134,12 @@ int gm_ax_bytes(const char *s, int n, int chars);
 enum { GM_AXE_FOCUS = 1, GM_AXE_VALUE, GM_AXE_NAME, GM_AXE_STATE, GM_AXE_ADD, GM_AXE_REMOVE, GM_AXE_ACTIVE, GM_AXE_TEXT, GM_AXE_CARET };
 #endif
 int gm_ax_pump(struct goome *g);
+#if defined(__APPLE__) && !defined(GOOME_NO_UI)
+void *gm_mac_view(struct goome *g);
+#endif
+#if defined(_WIN32) && !defined(GOOME_NO_UI)
+int gm_uia_obj(struct goome *g, void *hwnd, uintptr_t wp, intptr_t lp, intptr_t *out);
+#endif
 void gm_ax_close(struct goome *g);
 const gm_cap *gm_cap_test(void);
 const gm_ov *gm_ov_test(void);

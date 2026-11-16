@@ -167,7 +167,7 @@ void gm_ax_sync(goome *g, const goome_a11y_node *n, const gm_ax_x *x, int count,
     a->count = count, a->ntext = ntext, a->active = active;
     ax_rehash(a);
     int first = !a->synced;
-    a->synced = 1;
+    a->synced = 1, a->serial++;
     if (!ax_bridge(g) || first) return;
     if (a->active != a->pactive) gm_axp_event(g, GM_AXE_ACTIVE, -1, a->pactive);
     int pf = -1, cf = -1;
