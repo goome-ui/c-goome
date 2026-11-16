@@ -2370,6 +2370,109 @@ static void anything(void)
     CHECK(ring != 0 && clicked[0] != clicked[1]);
 }
 
+typedef struct {
+    goome *g;
+    goome_ui *u;
+    int on, dropped;
+    double box, sp, last;
+    uint32_t col, hash;
+} am_t;
+
+static void am_frame(am_t *k)
+{
+    goome_event ev;
+    while (goome_poll(k->g, &ev, 0) > 0) goome_ui_feed(k->u, &ev);
+    goome_canvas *c = goome_ui_begin(k->u, 0);
+    if (!c) return;
+    goome_canvas *r = goome_ui_canvas(k->u);
+    k->box = goome_ui_anim(k->u, "box", k->on ? 200 : 10, 160, GOOME_EASE_OUT);
+    k->sp = goome_ui_anim(k->u, "spring", k->on ? 1 : 0, 320, GOOME_EASE_SPRING);
+    k->col = goome_ui_anim_color(k->u, "col", k->on ? 0xFF20D060u : 0x00000000u, 200, GOOME_EASE_LINEAR);
+    if (!k->dropped) k->last = goome_ui_anim(k->u, "gone", k->on ? 5 : 0, 100, GOOME_EASE_LINEAR);
+    if (r) {
+        goome_draw_rect(r, k->box, 20, 60, 40, 0xFFE0A030u);
+        goome_draw_rrect(r, 20 + k->sp * 180, 90, 50, 30, goome_radius(15), 0xFF4FB3F7u);
+        goome_draw_rect(r, 20, 140, 260, 40, k->col);
+    }
+    goome_ui_end(k->u);
+    k->hash = fnv(c->px, c->w, c->h, c->stride);
+}
+
+static void anims(void)
+{
+    CHECK(goome_ease(GOOME_EASE_LINEAR, 0.25) == 0.25);
+    CHECK(goome_ease(GOOME_EASE_IN, 0.5) == 0.125);
+    CHECK(goome_ease(GOOME_EASE_OUT, 0.5) == 0.875);
+    CHECK(goome_ease(GOOME_EASE_IN_OUT, 0.25) == 0.0625);
+    CHECK(goome_ease(GOOME_EASE_IN_OUT, 0.75) == 0.9375);
+    CHECK(goome_ease(GOOME_EASE_SMOOTH, 0.5) == 0.5);
+    CHECK(goome_ease(GOOME_EASE_BOUNCE, 0.25) == 0.47265625);
+    CHECK(goome_ease(GOOME_EASE_OUT, -3) == 0 && goome_ease(GOOME_EASE_IN, 7) == 1);
+    double peak = 0, low = 1, bpeak = 0, sp_half = goome_ease(GOOME_EASE_SPRING, 0.5);
+    for (int e = GOOME_EASE_SMOOTH; e <= GOOME_EASE_BOUNCE; e++)
+        if (e != GOOME_EASE_CUSTOM && e != GOOME_EASE_BACK) CHECK(goome_ease(e, 0) == 0 && goome_ease(e, 1) == 1);
+    for (int i = 1; i < 100; i++) {
+        double v = goome_ease(GOOME_EASE_SPRING, i / 100.0), b = goome_ease(GOOME_EASE_BOUNCE, i / 100.0);
+        if (v > peak) peak = v;
+        if (i > 30 && v < low) low = v;
+        if (b > bpeak) bpeak = b;
+        CHECK(b >= 0);
+    }
+    CHECK(peak > 1.1 && peak < 1.25 && low < 1 && low > 0.9 && bpeak <= 1);
+    CHECK(sp_half > 0.95 && sp_half < 1.05 && goome_ease(GOOME_EASE_SPRING, 0.999) > 0.997);
+    CHECK(goome_ui_anim(NULL, "x", 3, 100, 0) == 3);
+
+    int err;
+    am_t k;
+    memset(&k, 0, sizeof(k));
+    k.g = goome_open(&(goome_opts){.backend = GOOME_TEST, .mode = GOOME_MODE_WINDOW, .width = 300, .height = 200, .test_script = "end 100000"}, &err);
+    CHECK(k.g != NULL);
+    if (!k.g) return;
+    k.u = goome_ui_new(k.g);
+    am_frame(&k);
+    CHECK(k.box == 10 && k.sp == 0 && k.col == 0 && k.last == 0);
+    am_frame(&k);
+    CHECK(!goome_ui_animating(k.u));
+    uint32_t hs[4];
+    k.on = 1;
+    double prev = k.box, over = 0, mid = -1;
+    int moving = 0, frames = 0;
+    for (; frames < 60; frames++) {
+        am_frame(&k);
+        if (frames == 1) hs[0] = k.hash;
+        if (frames == 4) hs[1] = k.hash;
+        if (frames == 8) hs[2] = k.hash;
+        CHECK(k.box >= prev);
+        prev = k.box;
+        if (k.sp > over) over = k.sp;
+        if (frames == 6) mid = k.col;
+        if (goome_ui_animating(k.u)) moving = frames + 1;
+    }
+    hs[3] = k.hash;
+    CHECK(k.box == 200 && k.sp == 1 && k.col == 0xFF20D060u && k.last == 5);
+    CHECK(over > 1.05 && moving >= 19 && moving <= 22 && !goome_ui_animating(k.u));
+    uint32_t m = (uint32_t)mid;
+    CHECK((m >> 24) > 0x70 && (m >> 24) < 0x90 && ((m >> 8) & 255) == 0xD0 && ((m >> 16) & 255) == 0x20);
+    k.on = 0;
+    am_frame(&k);
+    CHECK(goome_ui_animating(k.u) && k.box == 200);
+    am_frame(&k);
+    CHECK(k.box < 200 && k.box > 10);
+    k.on = 1;
+    am_frame(&k);
+    CHECK(k.box < 200 && goome_ui_animating(k.u));
+    k.dropped = 1;
+    for (int i = 0; i < 1600; i++) am_frame(&k);
+    k.dropped = 0, k.on = 0;
+    am_frame(&k);
+    CHECK(k.last == 0);
+    printf("anim hashes %08x %08x %08x %08x  moving %d over %.3f mid %08x\n", hs[0], hs[1], hs[2], hs[3], moving, over, m);
+    static const uint32_t want[4] = {0x0226f2f5u, 0x906d3ce5u, 0xdb5848adu, 0x12bea72du};
+    for (int i = 0; i < 4; i++) CHECK(hs[i] == want[i]);
+    goome_ui_free(k.u);
+    goome_close(k.g);
+}
+
 int main(void)
 {
     gm_dump_dir = getenv("GOOME_UNIT_DUMP");
@@ -2391,6 +2494,7 @@ int main(void)
     icons();
     anything();
     input_ex();
+    anims();
     printf(fails ? "%d failed\n" : "all good\n", fails);
     return fails != 0;
 }

@@ -301,21 +301,6 @@ static double ui_min(double a, double b) { return a < b ? a : b; }
 static double ui_max(double a, double b) { return a > b ? a : b; }
 static double ui_clamp(double v, double a, double b) { return v < a ? a : v > b ? b : v; }
 static double ui_abs(double v) { return v < 0 ? -v : v; }
-static double ui_ez(goome_ui *u, double t)
-{
-    t = ui_clamp(t, 0, 1);
-    double k = t - 1;
-    switch ((int)u->th.ease) {
-    case GOOME_EASE_LINEAR: return t;
-    case GOOME_EASE_OUT: return 1 - (1 - t) * (1 - t) * (1 - t);
-    case GOOME_EASE_IN_OUT: return t < 0.5 ? 4 * t * t * t : 1 + 4 * k * k * k;
-    case GOOME_EASE_BACK: return 1 + 2.70158 * k * k * k + 1.70158 * k * k;
-    case GOOME_EASE_CUSTOM:
-        if (u->cfg.ease) return u->cfg.ease(t, u->cfg.ease_user);
-        break;
-    }
-    return t * t * (3 - 2 * t);
-}
 static uint32_t ui_c(uint32_t c, uint32_t def) { return c ? c : def; }
 static int ui_bits(int m)
 {
@@ -344,6 +329,54 @@ static double ui_sin(double x)
     return x * (1 - x2 / 6 * (1 - x2 / 20 * (1 - x2 / 42 * (1 - x2 / 72 * (1 - x2 / 110)))));
 }
 static double ui_cos(double x) { return ui_sin(x + 1.57079632679489661923); }
+static double ui_exp(double x)
+{
+    int n = 0;
+    while ((x < -0.125 || x > 0.125) && n < 60) x /= 2, n++;
+    double r = 1 + x * (1 + x / 2 * (1 + x / 3 * (1 + x / 4 * (1 + x / 5 * (1 + x / 6 * (1 + x / 7))))));
+    while (n--) r *= r;
+    return r;
+}
+static double ui_sqrt(double v)
+{
+    if (v <= 0) return 0;
+    double r = v > 1 ? v : 1;
+    for (int i = 0; i < 40; i++) {
+        double n = (r + v / r) / 2;
+        if (n >= r) break;
+        r = n;
+    }
+    return r;
+}
+
+double goome_ease(int ease, double t)
+{
+    t = ui_clamp(t, 0, 1);
+    double k = t - 1;
+    switch (ease) {
+    case GOOME_EASE_LINEAR: return t;
+    case GOOME_EASE_IN: return t * t * t;
+    case GOOME_EASE_OUT: return 1 - (1 - t) * (1 - t) * (1 - t);
+    case GOOME_EASE_IN_OUT: return t < 0.5 ? 4 * t * t * t : 1 + 4 * k * k * k;
+    case GOOME_EASE_BACK: return 1 + 2.70158 * k * k * k + 1.70158 * k * k;
+    case GOOME_EASE_SPRING:
+        if (t <= 0 || t >= 1) return t;
+        return 1 - ui_exp(-7 * t) * (ui_cos(12 * t) + 7.0 / 12 * ui_sin(12 * t));
+    case GOOME_EASE_BOUNCE:
+        if (t >= 1) return 1;
+        if (t < 1 / 2.75) return 7.5625 * t * t;
+        if (t < 2 / 2.75) return t -= 1.5 / 2.75, 7.5625 * t * t + 0.75;
+        if (t < 2.5 / 2.75) return t -= 2.25 / 2.75, 7.5625 * t * t + 0.9375;
+        return t -= 2.625 / 2.75, 7.5625 * t * t + 0.984375;
+    }
+    return t * t * (3 - 2 * t);
+}
+static double ui_ease(goome_ui *u, int e, double t)
+{
+    if (e == GOOME_EASE_CUSTOM && u->cfg.ease) return u->cfg.ease(ui_clamp(t, 0, 1), u->cfg.ease_user);
+    return goome_ease(e, t);
+}
+static double ui_ez(goome_ui *u, double t) { return ui_ease(u, (int)u->th.ease, t); }
 static int ui_in(ui_box b, double x, double y) { return x >= b.x && y >= b.y && x < b.x + b.w && y < b.y + b.h; }
 static ui_box ui_bx(double x, double y, double w, double h)
 {
@@ -5601,6 +5634,56 @@ double *goome_ui_store(goome_ui *u, const char *id, int n)
     }
     k->seen = u->frame;
     return k->v;
+}
+
+static ui_st *ui_tween(goome_ui *u, const char *id, uint32_t tag, double target, double ms, int ease)
+{
+    int fresh;
+    ui_st *s = ui_get(u, ui_hashi(ui_id(u, id), tag), &fresh);
+    if (s == &u->dummy) return NULL;
+    ms = ui_ms(u, ms);
+    if (fresh || ms <= 0) {
+        s->v[0] = s->v[1] = target, s->v[2] = s->v[3] = 0, s->i[0] = ease, s->i[1] = u->frame;
+        return s;
+    }
+    if (s->i[1] != u->frame) s->v[2] += u->dt, s->i[1] = u->frame;
+    s->i[0] = ease;
+    if (target != s->v[1]) s->v[0] = s->v[4], s->v[1] = target, s->v[2] = 0, s->v[3] = ms;
+    if (s->v[2] < s->v[3]) u->anim_next = 1;
+    return s;
+}
+static int ui_tween_done(ui_st *s) { return s->v[3] <= 0 || s->v[2] >= s->v[3]; }
+
+double goome_ui_anim(goome_ui *u, const char *id, double target, double ms, int ease)
+{
+    if (!u) return target;
+    ui_st *s = ui_tween(u, id, 0x414E494Du, target, ms, ease);
+    if (!s) return target;
+    s->v[4] = ui_tween_done(s) ? s->v[1] : s->v[0] + (s->v[1] - s->v[0]) * ui_ease(u, s->i[0], s->v[2] / s->v[3]);
+    return s->v[4];
+}
+
+static uint32_t ui_mix_lin(uint32_t a, uint32_t b, double t)
+{
+    double aa = (double)(a >> 24) / 255, ba = (double)(b >> 24) / 255, oa = ui_clamp(aa + (ba - aa) * t, 0, 1);
+    uint32_t out = (uint32_t)(oa * 255 + 0.5) << 24;
+    if (oa <= 0) return 0;
+    for (int sh = 0; sh < 24; sh += 8) {
+        double x = (double)((a >> sh) & 255) / 255, y = (double)((b >> sh) & 255) / 255;
+        double lx = x * x * aa, ly = y * y * ba, l = lx + (ly - lx) * t;
+        out |= (uint32_t)(ui_sqrt(ui_clamp(l / oa, 0, 1)) * 255 + 0.5) << sh;
+    }
+    return out;
+}
+
+uint32_t goome_ui_anim_color(goome_ui *u, const char *id, uint32_t target, double ms, int ease)
+{
+    if (!u) return target;
+    ui_st *s = ui_tween(u, id, 0x414E4943u, target, ms, ease);
+    if (!s) return target;
+    uint32_t c = ui_tween_done(s) ? (uint32_t)s->v[1] : ui_mix_lin((uint32_t)s->v[0], (uint32_t)s->v[1], ui_ease(u, s->i[0], s->v[2] / s->v[3]));
+    s->v[4] = c;
+    return c;
 }
 
 goome_ui_config *goome_ui_cfg(goome_ui *u) { return u ? &u->cfg : NULL; }
