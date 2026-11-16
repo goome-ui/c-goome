@@ -34,7 +34,7 @@ build() {
   local objs=()
   for f in src/*.c; do cc "${fl[@]}" -c "$f" -o "$BIN/obj/$(basename "${f%.c}").o" || return 1; objs+=("$BIN/obj/$(basename "${f%.c}").o"); done
   rm -f "$BIN/libgoome.a"; ar rcs "$BIN/libgoome.a" "${objs[@]}"
-  for f in examples/hello.c examples/grab.c examples/app.c tests/wl_watch.c tests/win_two.c tests/grab_ui.c; do cc "${fl[@]}" -o "$BIN/$(basename "${f%.c}")" "$f" "$BIN/libgoome.a" || return 1; done
+  for f in examples/hello.c examples/grab.c examples/app.c tests/wl_watch.c tests/win_two.c tests/grab_ui.c tests/ime_ui.c; do cc "${fl[@]}" -o "$BIN/$(basename "${f%.c}")" "$f" "$BIN/libgoome.a" || return 1; done
   cc -O1 -I"$INC" -o "$S/wl_vptr" tests/wl_vptr.c -l:libwayland-client.so.0
 }
 
@@ -408,6 +408,16 @@ win_run() {
   swaymsg -q '[app_id="goome one"] kill'
   quits $ap two
   check "two windows sanitizers" san_clean "$L"
+  L=$O/ime.log
+  GOOME_BACKEND=wayland "$BIN/ime_ui" > "$L" 2>&1 &
+  ap=$!
+  check "ime text-input-v3 turns on" waitfor "$L" "^ime rc 0 " 30
+  sleep 0.5
+  "$WTYPE" -s 100 k
+  check "ime keys still type while text input is on" waitfor "$L" "^buf k$" 30
+  swaymsg -q '[app_id="goome ime"] kill'
+  quits $ap ime
+  check "ime sanitizers" san_clean "$L"
   pkill -f "$WLCOPY" 2>/dev/null
   stop_sway
 }

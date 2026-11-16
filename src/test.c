@@ -15,7 +15,7 @@ typedef struct {
     char s[256];
 } tb_step;
 
-enum { TB_CLICK = 1, TB_HOVER, TB_HOLD, TB_SCROLL, TB_KEY, TB_HOTKEY, TB_SEND, TB_RESIZE, TB_CLOSE, TB_FOCUS, TB_DROP, TB_GRABBED };
+enum { TB_CLICK = 1, TB_HOVER, TB_HOLD, TB_SCROLL, TB_KEY, TB_HOTKEY, TB_SEND, TB_RESIZE, TB_CLOSE, TB_FOCUS, TB_DROP, TB_GRABBED, TB_TEXT, TB_PREEDIT, TB_IME };
 
 typedef struct {
     char frames[1024], shots[1024];
@@ -146,6 +146,38 @@ static void tb_xy(const char **p, int *x, int *y)
     while (**p == ' ') (*p)++;
 }
 
+static void tb_ime_parse(const char *q, tb_step *s)
+{
+    snprintf(s->s, sizeof(s->s), "%s", q);
+    int n = (int)strlen(s->s), sp = n;
+    while (sp > 0 && s->s[sp - 1] != ' ') sp--;
+    s->a = -1;
+    if (sp > 0 && sp < n) {
+        const char *d = s->s + sp;
+        int ok = 1;
+        for (const char *c = d; *c; c++) ok &= *c >= '0' && *c <= '9';
+        if (ok) {
+            s->a = gm_num(&d);
+            s->s[sp - 1] = 0;
+        }
+    }
+    if (s->a < 0) s->a = (int)strlen(s->s);
+}
+
+static void tb_ime_fire(goome *g, const tb_step *s)
+{
+    if (s->type != TB_IME && !(tb.win ? tb.focused : g->kb_on)) return;
+    if (s->type == TB_TEXT) gm_ime_push(g, GOOME_TEXT, s->s, -1, 0);
+    else if (s->type == TB_PREEDIT) gm_ime_push(g, GOOME_PREEDIT, s->s, -1, s->a);
+    else {
+        goome_event e;
+        memset(&e, 0, sizeof(e));
+        e.type = GOOME_CONTROL;
+        snprintf(e.msg, sizeof(e.msg), "ime %d %d,%d %dx%d", g->ime_on, g->ime_caret.x, g->ime_caret.y, g->ime_caret.w, g->ime_caret.h);
+        gm_push(g, &e);
+    }
+}
+
 // "<tick> click x,y" etc, one per line (or split with ;). the readme has the full list
 static void tb_parse(const char *text)
 {
@@ -203,6 +235,9 @@ static void tb_parse(const char *text)
         else if (tb_word(&q, "focus")) s.type = TB_FOCUS, s.a = gm_num(&q);
         else if (tb_word(&q, "drop")) s.type = TB_DROP, tb_xy(&q, &s.x, &s.y), snprintf(s.s, sizeof(s.s), "%s", q);
         else if (tb_word(&q, "grabbed")) s.type = TB_GRABBED;
+        else if (tb_word(&q, "text")) s.type = TB_TEXT, snprintf(s.s, sizeof(s.s), "%s", q);
+        else if (tb_word(&q, "preedit")) s.type = TB_PREEDIT, tb_ime_parse(q, &s);
+        else if (tb_word(&q, "ime")) s.type = TB_IME;
         else continue;
         if (tb.nsteps == cap) {
             tb_step *n = realloc(tb.steps, sizeof(tb_step) * (size_t)(cap *= 2));
@@ -451,6 +486,9 @@ static int tb_wait(goome *g, int timeout_ms)
                 gm_push(g, &e);
                 break;
             }
+            case TB_TEXT:
+            case TB_PREEDIT:
+            case TB_IME: tb_ime_fire(g, s); break;
             }
         }
         if (t >= tb.end && !tb.ended && t == tb.tick) {

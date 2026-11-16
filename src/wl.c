@@ -622,8 +622,12 @@ static void wl_free_out(wl_out *o)
     o->mon = -1;
 }
 
+static int wlt_reg(struct wl_display *dpy, struct wl_registry *r, uint32_t name, const char *iface, uint32_t version);
+static void wlt_drop(struct wl_display *dpy);
+
 static void reg_global(void *d, struct wl_registry *r, uint32_t name, const char *iface, uint32_t version)
 {
+    if (wlt_reg(wls.dpy, r, name, iface, version)) return;
     if (!strcmp(iface, "wl_compositor") && !wls.comp) {
         wls.comp_v = version < 4 ? version : 4;
         wls.comp = wl_registry_bind(r, name, &gm_wl_compositor_interface, wls.comp_v);
@@ -826,6 +830,7 @@ static void wl_teardown(void)
     for (int i = 0; i < wls.nouts; i++)
         if (wls.outs[i].alive) wl_free_out(&wls.outs[i]);
     if (wls.dpy) {
+        wlt_drop(wls.dpy);
         if (wls.ptr) wl_pointer_release(wls.ptr);
         if (wls.kb) wl_keyboard_release(wls.kb);
         if (wls.arrow) wl_surface_destroy(wls.arrow);
@@ -1756,6 +1761,7 @@ static const struct xdg_surface_listener wl_ws_xdg_listener = {ws_configure};
 static void wl_win_reg(void *d, struct wl_registry *r, uint32_t name, const char *iface, uint32_t v)
 {
     wl_win *w = d;
+    if (wlt_reg(w->dpy, r, name, iface, v)) return;
     if (!strcmp(iface, "wl_compositor") && !w->comp) {
         w->comp_v = v < 6 ? v : 6;
         w->comp = wl_registry_bind(r, name, &gm_wl_compositor_interface, w->comp_v);
@@ -2095,6 +2101,7 @@ static void wl_win_close(goome *g)
     wl_win *w = g->ov_priv;
     if (!w) return;
     if (w->dpy) {
+        wlt_drop(w->dpy);
         wl_win_unmap(w);
         wl_offer_free(w->sel), wl_offer_free(w->dnd);
         if (w->src) wl_data_source_destroy(w->src);
@@ -2343,6 +2350,160 @@ static const gm_cap wlr_cap = {"wlr", wlr_cap_probe, wlr_cap_open, wlr_cap_grab,
 const gm_cap *gm_cap_wlr(void) { return &wlr_cap; }
 
 #undef WL_MARSHAL_FLAG_DESTROY
+typedef struct {
+    struct wl_display *dpy;
+    struct zwp_text_input_manager_v3 *mgr;
+    struct zwp_text_input_v3 *ti;
+    struct wl_surface *in;
+    goome *g;
+    int want, enabled, sent_pre, pcur, has_pre, has_commit;
+    goome_rect r, sent;
+    char *pre, *commit;
+} wlt_slot;
+
+static wlt_slot wlt[4];
+
+static wlt_slot *wlt_of(struct wl_display *dpy)
+{
+    for (int i = 0; i < 4; i++)
+        if (dpy && wlt[i].dpy == dpy) return &wlt[i];
+    return NULL;
+}
+
+static int wlt_reg(struct wl_display *dpy, struct wl_registry *r, uint32_t name, const char *iface, uint32_t version)
+{
+    if (strcmp(iface, "zwp_text_input_manager_v3")) return 0;
+    if (wlt_of(dpy)) return 1;
+    for (int i = 0; i < 4; i++)
+        if (!wlt[i].dpy) {
+            wlt[i].dpy = dpy;
+            wlt[i].mgr = wl_registry_bind(r, name, &gm_zwp_text_input_manager_v3_interface, 1);
+            break;
+        }
+    return 1;
+}
+
+static void wlt_drop(struct wl_display *dpy)
+{
+    wlt_slot *t = wlt_of(dpy);
+    if (!t) return;
+    if (t->ti) zwp_text_input_v3_destroy(t->ti);
+    if (t->mgr) zwp_text_input_manager_v3_destroy(t->mgr);
+    free(t->pre), free(t->commit);
+    memset(t, 0, sizeof(*t));
+}
+
+static void wlt_keep(char **to, const char *s)
+{
+    free(*to);
+    *to = NULL;
+    if (!s) return;
+    size_t n = strlen(s);
+    *to = malloc(n + 1);
+    if (*to) memcpy(*to, s, n + 1);
+}
+
+static void wlt_push_pre(wlt_slot *t, const char *s, int cur)
+{
+    int n = s ? (int)strlen(s) : 0;
+    if (!n && !t->sent_pre) return;
+    gm_ime_push(t->g, GOOME_PREEDIT, s ? s : "", n, cur < 0 ? n : cur);
+    t->sent_pre = n > 0;
+}
+
+static void wlt_apply(wlt_slot *t)
+{
+    if (!t->ti || !t->in) return;
+    if (!t->want) {
+        if (t->enabled) zwp_text_input_v3_disable(t->ti), zwp_text_input_v3_commit(t->ti), t->enabled = 0;
+        wlt_push_pre(t, NULL, 0);
+        return;
+    }
+    if (!t->enabled) {
+        zwp_text_input_v3_enable(t->ti);
+        zwp_text_input_v3_set_content_type(t->ti, ZWP_TEXT_INPUT_V3_CONTENT_HINT_NONE, ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_NORMAL);
+        t->enabled = 1;
+    } else if (!memcmp(&t->r, &t->sent, sizeof(t->r)))
+        return;
+    zwp_text_input_v3_set_cursor_rectangle(t->ti, t->r.x, t->r.y, t->r.w, t->r.h);
+    zwp_text_input_v3_commit(t->ti);
+    t->sent = t->r;
+}
+
+static void wlt_enter(void *d, struct zwp_text_input_v3 *ti, struct wl_surface *s)
+{
+    wlt_slot *t = d;
+    t->in = s, t->enabled = 0;
+    wlt_apply(t);
+}
+
+static void wlt_leave(void *d, struct zwp_text_input_v3 *ti, struct wl_surface *s)
+{
+    wlt_slot *t = d;
+    if (t->in != s) return;
+    if (t->enabled) zwp_text_input_v3_disable(t->ti), zwp_text_input_v3_commit(t->ti);
+    t->in = NULL, t->enabled = 0;
+    wlt_push_pre(t, NULL, 0);
+}
+
+static void wlt_preedit(void *d, struct zwp_text_input_v3 *ti, const char *text, int32_t begin, int32_t end)
+{
+    wlt_slot *t = d;
+    wlt_keep(&t->pre, text);
+    t->pcur = begin, t->has_pre = 1;
+}
+
+static void wlt_commit_str(void *d, struct zwp_text_input_v3 *ti, const char *text)
+{
+    wlt_slot *t = d;
+    wlt_keep(&t->commit, text);
+    t->has_commit = 1;
+}
+
+static void wlt_delete(void *d, struct zwp_text_input_v3 *ti, uint32_t before, uint32_t after) {}
+
+static void wlt_done(void *d, struct zwp_text_input_v3 *ti, uint32_t serial)
+{
+    wlt_slot *t = d;
+    if (t->has_commit && t->commit && t->commit[0]) gm_ime_push(t->g, GOOME_TEXT, t->commit, -1, 0);
+    wlt_push_pre(t, t->has_pre ? t->pre : NULL, t->pcur);
+    t->has_pre = t->has_commit = 0;
+    wlt_keep(&t->pre, NULL), wlt_keep(&t->commit, NULL);
+}
+
+static const struct zwp_text_input_v3_listener wlt_listener = {wlt_enter, wlt_leave, wlt_preedit, wlt_commit_str, wlt_delete, wlt_done};
+
+int gm_ime_wayland(goome *g, int on, const goome_rect *caret)
+{
+    struct wl_display *dpy;
+    struct wl_seat *seat;
+    goome_rect r = *caret;
+    if (g->ov_priv) {
+        wl_win *w = g->ov_priv;
+        dpy = w->dpy, seat = w->seat;
+        r.x += w->m, r.y += w->m + w->bh;
+    } else {
+        dpy = wls.dpy, seat = wls.seat;
+        for (int i = 0; i < wls.nouts; i++) {
+            wl_out *o = &wls.outs[i];
+            if (o->alive && o->surface && caret->x >= o->area.x && caret->y >= o->area.y && caret->x < o->area.x + o->area.w && caret->y < o->area.y + o->area.h)
+                r.x -= o->area.x, r.y -= o->area.y;
+        }
+    }
+    wlt_slot *t = wlt_of(dpy);
+    if (!t || !t->mgr) return on ? gm_fail(g, GOOME_ENOTSUP, "this compositor has no text-input-v3") : GOOME_OK;
+    if (!t->ti && on) {
+        if (!seat) return gm_fail(g, GOOME_ENOTSUP, "no wayland seat for text input");
+        t->ti = zwp_text_input_manager_v3_get_text_input(t->mgr, seat);
+        if (!t->ti) return gm_fail(g, GOOME_ENOMEM, "couldnt make a text input");
+        zwp_text_input_v3_add_listener(t->ti, &wlt_listener, t);
+    }
+    t->g = g, t->want = on, t->r = r;
+    wlt_apply(t);
+    wl_display_flush(dpy);
+    return GOOME_OK;
+}
+
 #undef wl_proxy_marshal_flags
 #undef wl_proxy_add_listener
 #undef wl_proxy_get_version

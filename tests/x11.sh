@@ -4,6 +4,8 @@
 #   tests/x11.sh asan     builds hello, grab, app and the probe with asan+ubsan first
 #   X11_ONLY=win          just the window mode part
 #   X11_ONLY=grab         just the input grab part
+#   X11_ONLY=late         just the hit rects that come after the overlay is up
+#   X11_ONLY=ime          just dead keys, compose and ibus (if its installed)
 # heavy (Xvfb + picom), takes a few minutes
 set -u
 repo=$(cd "$(dirname "$0")/.." && pwd)
@@ -24,7 +26,7 @@ if [ "${1:-}" = asan ]; then
   export LSAN_OPTIONS=suppressions=$S/lsan.supp
 fi
 mkdir -p bin
-for f in "$repo"/examples/hello.c "$repo"/examples/grab.c "$repo"/examples/app.c "$repo"/tests/x11_probe.c "$repo"/tests/win_two.c "$repo"/tests/grab_ui.c; do
+for f in "$repo"/examples/hello.c "$repo"/examples/grab.c "$repo"/examples/app.c "$repo"/tests/x11_probe.c "$repo"/tests/win_two.c "$repo"/tests/grab_ui.c "$repo"/tests/late_hits.c "$repo"/tests/ime_ui.c; do
   cc "${cflags[@]}" -o "bin/$(basename "${f%.c}")" "$f" "$repo"/src/*.c || exit 1
 done
 B=$S/bin
@@ -135,7 +137,7 @@ EOF
 python3 px.py pattern pat.ppm 1280 720
 
 xpid=
-stop_x() { pkill -P $$ -f 'xev|display|picom|hello|probe|xfwm4|app|xsel|win_two' 2>/dev/null; [ -n "$xpid" ] && kill "$xpid" 2>/dev/null; wait 2>/dev/null; xpid=; }
+stop_x() { pkill -P $$ -f 'xev|display|picom|hello|probe|xfwm4|app|xsel|win_two|late_hits' 2>/dev/null; [ -n "$xpid" ] && kill "$xpid" 2>/dev/null; wait 2>/dev/null; xpid=; }
 start_x() { # size, compositor 0/1
   Xvfb "$DPY" -screen 0 "$1"x24 -nolisten tcp -noreset >"xvfb-$tag.log" 2>&1 &
   xpid=$!
@@ -531,6 +533,101 @@ run_grab() {
   stop_x
 }
 
+maps() { grep -A2 '^MapNotify' "$1" | grep -c 'override YES'; }
+
+run_ime() {
+  tag=ime-$1
+  echo "== $tag"
+  start_x 1280x720 0
+  local L=$tag.log ip= im=@im=none
+  if [ "$1" = ibus ]; then
+    mkdir -p "$S/ibus-cfg" "$S/ibus-cache"
+    dbus-daemon --session --fork --address="unix:path=$S/ibus-dbus" --print-pid >"$S/ibus-dbus.pid"
+    local ienv=(DBUS_SESSION_BUS_ADDRESS=unix:path=$S/ibus-dbus IBUS_ADDRESS=unix:path=$S/ibus-sock XDG_CONFIG_HOME=$S/ibus-cfg XDG_CACHE_HOME=$S/ibus-cache)
+    env "${ienv[@]}" ibus-daemon -x -p disable -E disable -c disable -a "unix:path=$S/ibus-sock" >"$S/ibus.log" 2>&1 &
+    ip=$!
+    sleep 2
+    env "${ienv[@]}" ibus engine xkb:us::eng >>"$S/ibus.log" 2>&1
+    sleep 0.5
+    im=@im=ibus
+  fi
+  xmodmap -e "keycode 200 = dead_acute" -e "keycode 201 = Multi_key"
+  env -u LC_ALL LANG=C.UTF-8 XMODIFIERS=$im "$B/ime_ui" >"$L" 2>"$tag.err" &
+  local ap=$!
+  waitfor "$L" '^ime rc' 40
+  check "$tag: the input method opens" grep -q '^ime rc 0 ' "$L"
+  xdotool search --name '^goome ime$' windowfocus 2>/dev/null
+  sleep 0.3
+  P2 key.py dead_acute e
+  check "$tag: dead key then e commits e acute" waitfor "$L" '^text é$'
+  P2 key.py a
+  check "$tag: a plain key stays a key" waitfor "$L" '^key a$'
+  P2 key.py Multi_key o c
+  check "$tag: compose o c is the copyright sign" waitfor "$L" '^text ©$'
+  check "$tag: the input has all of it" waitfor "$L" '^buf éa©$'
+  check "$tag: no text event for the plain key" bash -c "! grep -q '^text a' $L"
+  if [ "$1" = ibus ]; then
+    check "$tag: ibus shows the dead key as preedit" grep -q "^preedit '´' " "$L"
+    check "$tag: preedit gets cleared after the commit" grep -q "^preedit '' 0$" "$L"
+  fi
+  kill $ap 2>/dev/null
+  wait $ap 2>/dev/null
+  if [ "$1" = ibus ]; then
+    kill $ip 2>/dev/null
+    wait $ip 2>/dev/null
+    kill "$(cat "$S/ibus-dbus.pid")" 2>/dev/null
+  fi
+  stop_x
+}
+
+run_late() {
+  tag=late-$1
+  local wm=$2
+  echo "== $tag"
+  start_x 1280x720 0
+  if [ "$wm" != none ]; then "$wm" --compositor=off >"wm-$tag.log" 2>&1 & sleep 1.5; fi
+  xev -geometry 300x200+900+450 -event button >"xev-$tag.log" 2>&1 &
+  sleep 0.5
+  local L=late-$tag.log M=map-$tag.log
+  for mode in key 1500; do
+    "$B/late_hits" $mode >"$L" 2>"late-$tag.err" &
+    local lp=$!
+    waitfor "$L" '^ready' 40
+    sleep 0.3
+    xev -root -event substructure >"$M" 2>&1 &
+    local mp=$!
+    sleep 0.3
+    xdotool mousemove 400 260 click 1
+    sleep 0.3
+    check "$tag $mode: shown with no hit rects, clicks go through" bash -c "! grep -q '^down' $L"
+    if [ $mode = key ]; then
+      P2 key.py ctrl+shift+F6
+      check "$tag key: hotkey fires" waitfor "$L" '^hotkey id 1$'
+    fi
+    check "$tag $mode: hit rects come on" waitfor "$L" '^hits on$' 40
+    sleep 0.3
+    check "$tag $mode: first hit rects map a fresh window" test "$(maps "$M")" -ge 1
+    xdotool mousemove 405 265 click 1
+    check "$tag $mode: click on the box reaches it" waitfor "$L" '^down 405,265$'
+    check "$tag $mode: old window is gone" test "$(xdotool search --name '^goome late$' | wc -l)" = 1
+    if [ $mode = key ]; then
+      P2 key.py ctrl+shift+F6
+      waitfor "$L" '^hits off$'
+      sleep 0.3
+      xdotool mousemove 410 270 click 1
+      sleep 0.3
+      check "$tag key: menu off, clicks go through again" bash -c "! grep -q '^down 410,270' $L"
+      P2 key.py ctrl+shift+F6
+      sleep 0.5
+      xdotool mousemove 415 270 click 1
+      check "$tag key: menu back on, clicks work" waitfor "$L" '^down 415,270$'
+    fi
+    kill $lp $mp 2>/dev/null; wait $lp $mp 2>/dev/null
+    check "$tag $mode: asan/ubsan clean" bash -c "! grep -qE 'ERROR: (Address|Leak)Sanitizer|runtime error' late-$tag.err"
+  done
+  stop_x
+}
+
 echo "== no display"
 (unset DISPLAY; GOOME_BACKEND=x11 "$B/hello" >nodpy.log 2>&1); rc=$?
 check "open: no DISPLAY fails cleanly (rc $rc)" test $rc = 1
@@ -545,7 +642,15 @@ if [ -z "${X11_ONLY:-}" ] || [ "$X11_ONLY" = grab ]; then
   run_grab nowm none
   if command -v xfwm4 >/dev/null; then run_grab xfwm4 xfwm4; else echo "skip grab with a window manager, no xfwm4"; fi
 fi
-if [ "${X11_ONLY:-}" = grab ]; then
+if [ -z "${X11_ONLY:-}" ] || [ "$X11_ONLY" = late ]; then
+  run_late nowm none
+  if command -v xfwm4 >/dev/null; then run_late xfwm4 xfwm4; else echo "skip late hit rects with a window manager, no xfwm4"; fi
+fi
+if [ -z "${X11_ONLY:-}" ] || [ "$X11_ONLY" = ime ]; then
+  run_ime none
+  if command -v ibus-daemon >/dev/null && command -v dbus-daemon >/dev/null; then run_ime ibus; else echo "skip ime with ibus, its not installed"; fi
+fi
+if [ "${X11_ONLY:-}" = grab ] || [ "${X11_ONLY:-}" = late ] || [ "${X11_ONLY:-}" = ime ]; then
   :
 elif command -v xsel >/dev/null; then
   run_win nowm none 0
