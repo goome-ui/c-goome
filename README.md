@@ -567,7 +567,7 @@ goome_ui_free(u);
 <b>Windows</b> - drag, resize, collapse, close, they stack in the order you click them<br>
 <b>Layout</b> - rows, same line, fixed widths, spacing and scroll areas that nest<br>
 <b>Themes</b> - <code>goome_ui_theme(u)</code> hands you every color and size, and the fonts. Dark and light built in, nine slice skins for every part and your own pictures for every icon. Any of it can change per widget too, see below<br>
-<b>Smooth</b> - hovers and popups animate, toggles slide, <code>goome_ui_animating</code> tells you when to keep drawing so it's idle the rest of the time
+<b>Smooth</b> - hovers and popups animate, toggles slide, <code>goome_ui_anim</code> moves your own stuff with springs and bounces, <code>goome_ui_animating</code> tells you when to keep drawing so it's idle the rest of the time
 </p>
 
 <h3 align="center">Taking input from the game</h3>
@@ -620,6 +620,25 @@ goome_canvas *c = goome_ui_canvas(u);
 goome_draw_arc(c, it.x + 40, it.y + 40, 30, 6, 2.36, 2.36 + 4.71 * gain[0], goome_ui_theme(u)->accent);
 ```
 
+<h3 align="center">Animations</h3>
+
+<p align="center">
+<code>goome_ui_anim(u, id, target, ms, ease)</code> gives you a number that moves to <code>target</code> over <code>ms</code>. Call it every frame with whatever the target is right now, when the target changes it starts moving from where it is. The first time an id shows up it just starts at the target, so nothing slides in on the first frame. <code>ms</code> below 0 uses the theme <code>anim_ms</code>, 0 jumps straight there.<br> <br>
+<code>goome_ui_anim_color</code> is the same for colors. It blends in premultiplied linear-ish light, so red to green goes through a bright yellow and not brown, and fading from fully see through doesnt flash black first.<br> <br>
+The eases are <code>GOOME_EASE_LINEAR</code>, IN, OUT, IN_OUT, SMOOTH, BACK, SPRING and BOUNCE (CUSTOM uses <code>cfg->ease</code>). Spring overshoots a bit and wobbles back, bounce drops in and bounces on the end. <code>goome_ease(ease, t)</code> gives you the raw curve if you want it for your own stuff, its the same one the theme <code>ease</code> uses so all the new ones work there too.<br> <br>
+While anything is still moving <code>goome_ui_animating</code> stays 1, so the usual "only draw when something happens" loop keeps going till it lands. State is kept per id like the widgets do and gets dropped after an id isnt used for about 1200 frames.
+</p>
+
+```c
+double x = goome_ui_anim(u, "drawer", open ? 0 : -260, 300, GOOME_EASE_OUT);
+uint32_t bg = goome_ui_anim_color(u, "drawer", open ? 0xFF2D6CDF : 0xFF262A31, 300, GOOME_EASE_IN_OUT);
+double knob = goome_ui_anim(u, "knob", on, 500, GOOME_EASE_SPRING);
+```
+
+<p align="center">
+A one shot bounce (like a badge dropping in) is a jump then a move: pass the start with <code>ms</code> 0 for one frame, then the real target. <code>examples/anim.c</code> has every ease side by side, a color fade, a springy toggle and a bouncing badge.
+</p>
+
 <h3 align="center">Swap every icon and part</h3>
 
 <p align="center">
@@ -659,7 +678,7 @@ To change anything else, every size and color lives in the theme and the rest is
 Sizes: <code>check_size</code>, <code>toggle_w</code>/<code>toggle_h</code>, <code>slider_h</code>, <code>slider_track</code>, <code>knob_size</code>, <code>scroll_w</code>, <code>scroll_min</code>, <code>item_h</code> (every widget row), <code>tab_h</code>, <code>menu_item_h</code>, title bar, menubar and statusbar heights, <code>focus_w</code>/<code>focus_gap</code> for the focus ring, <code>sep_w</code>, <code>grip</code>, tree <code>indent</code>, <code>plot_w</code>, <code>spinner</code>, <code>caret_w</code> (go wide for a block caret), window min size, popup and tooltip offsets and padding, <code>check_radius</code>, <code>tip_radius</code> and <code>shadow_x</code>/<code>shadow_y</code>. The checkbox, toggle, slider, indent and plot ones are at font size 15 and grow with the font. Heights set to 0 come from the font<br>
 Colors: <code>focus</code>, <code>select</code>, <code>caret</code>, <code>link</code>, <code>badge</code>, <code>toast</code>, <code>tooltip</code>, <code>danger</code> (the red close buttons), <code>knob</code> and <code>dim</code> (behind modals). 0 means work it out from the other colors<br>
 Text: <code>align</code> (<code>GOOME_ALIGN_LEFT</code>, CENTER, RIGHT, 0 = what the widget normally does), <code>heading_size</code>, <code>small_size</code> for badges and the statusbar, and <code>font_heading</code>, <code>font_mono</code>, <code>font_small</code> next to <code>font</code><br>
-Motion: <code>ease</code> (<code>GOOME_EASE_SMOOTH</code>, LINEAR, OUT, IN_OUT, BACK or CUSTOM with your own function) and <code>hover_ms</code>, <code>press_ms</code>, <code>popup_ms</code>, <code>collapse_ms</code>, <code>toast_fade_ms</code>. Below 0 they follow <code>anim_ms</code><br> <br>
+Motion: <code>ease</code> (<code>GOOME_EASE_SMOOTH</code>, LINEAR, IN, OUT, IN_OUT, BACK, SPRING, BOUNCE or CUSTOM with your own function) and <code>hover_ms</code>, <code>press_ms</code>, <code>popup_ms</code>, <code>collapse_ms</code>, <code>toast_fade_ms</code>. Below 0 they follow <code>anim_ms</code><br> <br>
 Every one of those has a <code>GOOME_S_*</code>, so <code>goome_ui_push_num(u, GOOME_S_CHECK_SIZE, 24)</code> works for one widget.<br> <br>
 Stuff that isnt a look goes in <code>goome_ui_cfg(u)</code>: tooltip delay, double click time and distance, drag distance, key repeat, caret blink (0 = no blink), scroll speed, menu delay and the default toast time. Toggles for raising windows on click, esc closing popups, tab moving focus and showing the focus ring after a mouse click. <code>cursor[GOOME_CUR_*]</code> is the cursor each kind of widget asks for, set <code>GOOME_CUR_BUTTON</code> to <code>GOOME_CURSOR_HAND</code> for web style buttons. The keys in inputs and the text editor are a key map:
 </p>
@@ -687,7 +706,7 @@ Put all of that together with icons and skins and it really can look like anythi
 A multi line text editor (line numbers, wrap, undo/redo), tables you can sort and resize with any widget in a cell, trees, drag-to-change numbers, line and bar plots, split panes, drag and drop between widgets, spinners, links and badges.<br>
 For huge lists theres <code>goome_ui_list_clip</code>, it only draws the rows you can see.<br>
 <code>goome_ui_input_ex(u, label, buf, cap, flags, hint)</code> is the input with extras. <code>hint</code> is the grey text you see while its empty, and the flags are <code>GOOME_INPUT_PASSWORD</code> (draws <code>cfg->mask</code> per letter, "*" by default, and wont copy), <code>READONLY</code>, <code>NUMBER</code> (only digits, + - and .), <code>NO_SELECT_ON_FOCUS</code> and <code>ENTER_RETURNS</code> (returns 2 on enter, handy for login boxes). <code>goome_ui_input</code> is the same thing with no flags.<br> <br>
-<code>examples/ui.c</code> shows off the overlay side, <code>examples/app_ui.c</code> is the notes app, <code>examples/widgets.c</code> has a page for each new widget, <code>examples/custom.c</code> is all the custom stuff above, <code>examples/skinned.c</code> swaps every icon and part and <code>examples/anything.c</code> shows 4 totally different looks. The <a href="https://github.com/goome-ui/examples">examples repo</a> has a lot more, small real apps you can copy from. <code>#define GOOME_NO_UI</code> leaves the ui kit out.
+<code>examples/ui.c</code> shows off the overlay side, <code>examples/app_ui.c</code> is the notes app, <code>examples/widgets.c</code> has a page for each new widget, <code>examples/custom.c</code> is all the custom stuff above, <code>examples/skinned.c</code> swaps every icon and part, <code>examples/anything.c</code> shows 4 totally different looks and <code>examples/anim.c</code> shows off the animations. The <a href="https://github.com/goome-ui/examples">examples repo</a> has a lot more, small real apps you can copy from. <code>#define GOOME_NO_UI</code> leaves the ui kit out.
 </p>
 </details>
 
