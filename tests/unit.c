@@ -7,6 +7,7 @@
 #include "goome.h"
 #include "fontdata.h"
 #include "images.h"
+#include "colorfonts.h"
 
 static int fails;
 static const char *gm_dump_dir;
@@ -2473,6 +2474,154 @@ static void anims(void)
     goome_close(k.g);
 }
 
+static uint32_t txt_hash(goome_font *f, double size, const char *s, uint32_t argb, int dir, int w, int h)
+{
+    static uint32_t px[400 * 120];
+    goome_canvas c;
+    memset(&c, 0, sizeof(c));
+    memset(px, 0, sizeof(px));
+    c.px = px, c.w = w, c.h = h, c.stride = 400, c.scale = 1, c.kx1 = w, c.ky1 = h;
+    goome_text_dir(dir);
+    goome_text(&c, f, size, 4, 4, s, argb);
+    goome_text_dir(GOOME_DIR_AUTO);
+    return fnv(px, 400, 120, 400);
+}
+
+static int near(double a, double b) { return a - b < 0.01 && b - a < 0.01; }
+
+static void emoji_rtl(void)
+{
+    goome_font *f = goome_font_load_mem(colr_ttf, sizeof(colr_ttf), 0), *cb = goome_font_load_mem(cbdt_ttf, sizeof(cbdt_ttf), 0);
+    goome_font *sb = goome_font_load_mem(sbix_ttf, sizeof(sbix_ttf), 0), *d = goome_font_load_mem(sub_ttf, sizeof(sub_ttf), 0);
+    CHECK(f && cb && sb && d);
+    if (!f || !cb || !sb || !d) return;
+    CHECK(near(goome_text_measure(f, 30, "\xF0\x9F\x98\x80\xF0\x9F\x8F\xBB", NULL), 24));
+    CHECK(near(goome_text_measure(f, 30, "\xF0\x9F\x98\x80\xE2\x80\x8D\xF0\x9F\x98\x80", NULL), 24));
+    CHECK(near(goome_text_measure(f, 30, "\xE2\x9D\xA4", NULL), 18) && near(goome_text_measure(f, 30, "\xE2\x9D\xA4\xEF\xB8\x8F", NULL), 24));
+    uint32_t got[6], want[6] = {0x3bab3875u, 0x85fe883au, 0xd3add387u, 0xb79518ddu, 0x49a72d7du, 0x469719e1u};
+    got[0] = txt_hash(f, 30, "ab \xF0\x9F\x98\x80 \xF0\x9F\x98\x80\xF0\x9F\x8F\xBB \xF0\x9F\x98\x80\xE2\x80\x8D\xF0\x9F\x98\x80 \xE2\x9D\xA4 \xE2\x9D\xA4\xEF\xB8\x8F", 0xFF2040A0, 0, 400, 60);
+    static uint32_t px[400 * 120];
+    goome_canvas c;
+    memset(&c, 0, sizeof(c));
+    memset(px, 0, sizeof(px));
+    c.px = px, c.w = 400, c.h = 120, c.stride = 400, c.scale = 1;
+    goome_text(&c, cb, 16, 4, 4, "\xF0\x9F\x90\xB1", 0xFFFFFFFF);
+    goome_text(&c, cb, 64, 30, 4, "\xF0\x9F\x90\xB1", 0xFFFFFFFF);
+    goome_text(&c, sb, 40, 120, 4, "\xF0\x9F\x90\xB1\xF0\x9F\x90\xB1", 0x80FFFFFF);
+    uint32_t mid = px[(4 + 40) * 400 + 30 + 35];
+    CHECK((mid >> 24) == 255 && (mid >> 16 & 255) > 200 && (mid >> 8 & 255) > 100 && (mid >> 8 & 255) < 210 && (mid & 255) < 120);
+    got[1] = fnv(px, 400, 120, 400);
+    goome_font_fallback(d, f);
+    goome_font_fallback(d, d);
+    CHECK(near(goome_text_measure(d, 20, "goome! \xF0\x9F\x98\x80", NULL), goome_text_measure(d, 20, "goome! ", NULL) + 16));
+    got[2] = txt_hash(d, 20, "goome! \xF0\x9F\x98\x80 Hi", 0xFFFFFFFF, 0, 400, 40);
+    got[3] = txt_hash(f, 24, "ab \xD7\x90\xD7\x91\xD7\x92 (12) c", 0xFFFFFFFF, 0, 400, 40);
+    CHECK(got[3] != txt_hash(f, 24, "ab \xD7\x90\xD7\x91\xD7\x92 (12) c", 0xFFFFFFFF, GOOME_DIR_RTL, 400, 40));
+    CHECK(got[3] == txt_hash(f, 24, "ab \xD7\x90\xD7\x91\xD7\x92 (12) c", 0xFFFFFFFF, GOOME_DIR_LTR, 400, 40));
+    got[4] = txt_hash(f, 24, "ab \xD7\x90\xD7\x91\xD7\x92 (12) c", 0xFFFFFFFF, GOOME_DIR_RTL, 400, 40);
+    CHECK(near(goome_text_measure(f, 20, "\xD8\xA8\xD9\x84\xD8\xA7\xD9\x85 \xD8\xA8\xD8\xA8\xD8\xA8 \xD9\x84\xD9\x85", NULL), 93.2));
+    got[5] = txt_hash(f, 30, "\xD8\xA8\xD9\x84\xD8\xA7\xD9\x85 \xD8\xA8\xD8\xA8\xD8\xA8 \xD9\x84\xD9\x85 \xD8\xA8\xD9\x8E\xD8\xA8", 0xFFFFFFFF, 0, 400, 50);
+    CHECK(got[5] != txt_hash(f, 30, "\xD8\xA8 \xD9\x84\xD8\xA7\xD9\x85 \xD8\xA8 \xD8\xA8 \xD8\xA8 \xD9\x84\xD9\x85", 0xFFFFFFFF, 0, 400, 50));
+    printf("emoji rtl hashes %08x %08x %08x %08x %08x %08x\n", got[0], got[1], got[2], got[3], got[4], got[5]);
+    for (int i = 0; i < 6; i++) CHECK(got[i] == want[i]);
+    for (size_t cut = 0; cut < sizeof(colr_ttf); cut += 5) {
+        static unsigned char bad[sizeof(colr_ttf)];
+        const unsigned char *src = cut % 3 == 0 ? colr_ttf : cut % 3 == 1 ? cbdt_ttf : sbix_ttf;
+        size_t n = cut % 3 == 0 ? sizeof(colr_ttf) : cut % 3 == 1 ? sizeof(cbdt_ttf) : sizeof(sbix_ttf);
+        memcpy(bad, src, n);
+        bad[cut % n] ^= 0x5A;
+        goome_font *b = goome_font_load_mem(bad, (cut & 1) ? n : cut % n + 12, 0);
+        memset(&c, 0, sizeof(c));
+        c.px = px, c.w = 400, c.h = 120, c.stride = 400, c.scale = 1;
+        goome_text(&c, b, 30, 0, 0, "a\xF0\x9F\x98\x80\xF0\x9F\x8F\xBB\xF0\x9F\x90\xB1\xE2\x9D\xA4\xEF\xB8\x8F\xD8\xA8\xD9\x84\xD8\xA7 \xD7\x90", 0xFFFFFFFF);
+        goome_font_free(b);
+    }
+    goome_font_free(d);
+    goome_font_free(sb);
+    goome_font_free(cb);
+    goome_font_free(f);
+}
+
+typedef struct {
+    goome *g;
+    goome_ui *u;
+    char in[64], ed[96];
+    uint32_t hash;
+} bd_t;
+
+static void bd_key(bd_t *k, int key, int mods)
+{
+    goome_event e;
+    memset(&e, 0, sizeof(e));
+    e.type = GOOME_KEY, e.key = key, e.mods = mods;
+    if (key >= 32 && key < 127 && !(mods & GOOME_CTRL)) e.text[0] = (char)key;
+    goome_push(k->g, &e);
+}
+
+static void bd_frame(bd_t *k, int focus)
+{
+    goome_event ev;
+    while (goome_poll(k->g, &ev, 0) > 0) goome_ui_feed(k->u, &ev);
+    goome_canvas *c = goome_ui_begin(k->u, 0);
+    if (!c) return;
+    if (focus == 1) goome_ui_set_focus(k->u);
+    goome_ui_input_ex(k->u, "in", k->in, sizeof(k->in), GOOME_INPUT_NO_SELECT_ON_FOCUS, NULL);
+    if (focus == 2) goome_ui_set_focus(k->u);
+    goome_ui_text_edit(k->u, "ed", k->ed, sizeof(k->ed), 80, 0);
+    goome_ui_end(k->u);
+    k->hash = fnv(c->px, c->w, c->h, c->stride);
+}
+
+static const char *bd_run(goome_font *f, int edit, const char *text, const int *keys, uint32_t *hash)
+{
+    static bd_t k;
+    int err;
+    memset(&k, 0, sizeof(k));
+    k.g = goome_open(&(goome_opts){.backend = GOOME_TEST, .mode = GOOME_MODE_WINDOW, .width = 300, .height = 200, .test_script = "end 100000"}, &err);
+    if (!k.g) return "";
+    k.u = goome_ui_new(k.g);
+    if (!k.u) return goome_close(k.g), "";
+    goome_theme *t = goome_ui_theme(k.u);
+    t->font = f, t->font_size = 14, t->anim_ms = 0;
+    goome_ui_cfg(k.u)->blink_ms = 0;
+    snprintf(edit ? k.ed : k.in, edit ? sizeof(k.ed) : sizeof(k.in), "%s", text);
+    bd_frame(&k, edit ? 2 : 1);
+    bd_frame(&k, 0);
+    for (; *keys; keys += 2) bd_key(&k, keys[0], keys[1]), bd_frame(&k, 0);
+    bd_frame(&k, 0);
+    if (hash) *hash = k.hash;
+    goome_ui_free(k.u);
+    goome_close(k.g);
+    return edit ? k.ed : k.in;
+}
+
+static void bidi_caret(void)
+{
+    goome_font *f = goome_font_load_mem(colr_ttf, sizeof(colr_ttf), 0);
+    CHECK(f != NULL);
+    if (!f) return;
+    enum { L = GOOME_K_LEFT, R = GOOME_K_RIGHT, H = GOOME_K_HOME, E = GOOME_K_END, S = GOOME_SHIFT };
+    uint32_t hs[6];
+    const char *heb = "\xD7\x90\xD7\x91\xD7\x92";
+    CHECK(!strcmp(bd_run(f, 0, heb, (int[]){H, 0, L, 0, 'a', 0, 0}, &hs[0]), "\xD7\x90" "a\xD7\x91\xD7\x92"));
+    CHECK(!strcmp(bd_run(f, 0, heb, (int[]){E, 0, R, 0, 'b', 0, 0}, NULL), "\xD7\x90\xD7\x91" "b\xD7\x92"));
+    CHECK(!strcmp(bd_run(f, 0, heb, (int[]){H, 0, R, 0, 'c', 0, 0}, NULL), "c\xD7\x90\xD7\x91\xD7\x92"));
+    CHECK(!strcmp(bd_run(f, 0, "abc \xD7\x90\xD7\x91\xD7\x92", (int[]){E, 0, L, 0, 'z', 0, 0}, NULL), "abcz \xD7\x90\xD7\x91\xD7\x92"));
+    CHECK(!strcmp(bd_run(f, 0, "ab \xD7\x90\xD7\x91 cd", (int[]){H, 0, R, 0, R, 0, R, 0, R, 0, 'x', 0, 0}, NULL), "ab \xD7\x90x\xD7\x91 cd"));
+    bd_run(f, 0, "ab \xD7\x90\xD7\x91\xD7\x92 cd", (int[]){H, 0, R, 0, R, 0, R, 0, R, S, R, S, 0}, &hs[1]);
+    CHECK(!strcmp(bd_run(f, 0, "\xF0\x9F\x98\x80\xF0\x9F\x8F\xBB" "a", (int[]){H, 0, R, 0, 'q', 0, 0}, NULL), "\xF0\x9F\x98\x80\xF0\x9F\x8F\xBBqa"));
+    CHECK(!strcmp(bd_run(f, 1, "\xD7\x90\xD7\x91\xD7\x92\nabc", (int[]){H, 0, L, 0, 'x', 0, 0}, &hs[2]), "\xD7\x90x\xD7\x91\xD7\x92\nabc"));
+    CHECK(!strcmp(bd_run(f, 1, "\xD7\x90\xD7\x91\xD7\x92\nabc", (int[]){H, 0, L, 0, L, 0, L, 0, L, 0, 'y', 0, 0}, NULL), "\xD7\x90\xD7\x91\xD7\x92\ny" "abc"));
+    bd_run(f, 1, "\xD7\x90\xD7\x91 ab \xD7\x92\n\xD8\xA8\xD8\xA8", (int[]){H, 0, L, S, L, S, L, S, 0}, &hs[3]);
+    bd_run(f, 0, "\xD8\xA8\xD9\x84\xD8\xA7\xD9\x85 12", (int[]){E, 0, L, S, 0}, &hs[4]);
+    bd_run(f, 0, "\xD8\xA8\xD9\x84\xD8\xA7\xD9\x85 12", (int[]){E, 0, R, S, 0}, &hs[5]);
+    CHECK(hs[4] != hs[5]);
+    printf("bidi caret hashes %08x %08x %08x %08x %08x %08x\n", hs[0], hs[1], hs[2], hs[3], hs[4], hs[5]);
+    uint32_t want[6] = {0xf96a8023u, 0x8c422f63u, 0xeb1c9776u, 0xfb019b26u, 0x31cd9204u, 0xe15c011au};
+    for (int i = 0; i < 6; i++) CHECK(hs[i] == want[i]);
+    goome_font_free(f);
+}
+
 int main(void)
 {
     gm_dump_dir = getenv("GOOME_UNIT_DUMP");
@@ -2495,6 +2644,8 @@ int main(void)
     anything();
     input_ex();
     anims();
+    emoji_rtl();
+    bidi_caret();
     printf(fails ? "%d failed\n" : "all good\n", fails);
     return fails != 0;
 }
