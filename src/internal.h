@@ -71,6 +71,10 @@ struct goome {
     int cursor;
     char *clip;
     char drop[4096];
+    char *ime_q, *ime_text;
+    size_t ime_qlen, ime_qcap;
+    int ime_cur, ime_on;
+    goome_rect ime_caret;
     int nhit;
     goome_rect *hit;
     goome_canvas *frame;
@@ -108,12 +112,15 @@ int gm_of_resize(struct goome *g, int w, int h, double scale);
 int gm_clip_keep(struct goome *g, const char *s);
 int gm_clip_copy(struct goome *g, char **out);
 void gm_drop(struct goome *g, double x, double y, const char *path);
+int gm_ime_push(struct goome *g, int type, const char *s, int n, int cursor);
 #if defined(_WIN32)
 const gm_cap *gm_cap_win32(void);
 const gm_ov *gm_ov_win32(void);
+int gm_ime_win32(struct goome *g, int on, const goome_rect *caret);
 #elif defined(__APPLE__)
 const gm_cap *gm_cap_macos(void);
 const gm_ov *gm_ov_macos(void);
+int gm_ime_macos(struct goome *g, int on, const goome_rect *caret);
 #elif defined(__linux__) || defined(__FreeBSD__)
 #define GM_LINUX 1
 const gm_ov *gm_ov_wayland(void);
@@ -122,6 +129,8 @@ const gm_ov *gm_ov_x11(void);
 const gm_cap *gm_cap_x11(void);
 const gm_cap *gm_cap_mutter(void);
 const gm_cap *gm_cap_portal(void);
+int gm_ime_x11(struct goome *g, int on, const goome_rect *caret);
+int gm_ime_wayland(struct goome *g, int on, const goome_rect *caret);
 int gm_uri_paths(const char *s, size_t n, char **out);
 void gm_drop_next(struct goome *g, const char *drops, int *off, int len, double x, double y);
 #endif

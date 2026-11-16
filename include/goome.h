@@ -112,6 +112,8 @@ enum {
     GOOME_CLOSE, // window close button / alt-f4 / cmd-w, the app decides
     GOOME_FOCUS, // id = 1 gained, 0 lost
     GOOME_DROP,  // a file dropped on the window, msg = path (cut at 63 bytes, goome_drop_path has all of it), x,y = where
+    GOOME_TEXT,    // an ime, dead key or compose finished some text, msg = it (cut at 63 bytes, goome_event_text has all of it)
+    GOOME_PREEDIT, // the text being composed changed, msg = it, id = caret byte offset in it. empty = composing ended
 };
 
 enum {
@@ -191,6 +193,9 @@ int goome_cursor_shape(goome *g); // last one asked for, offscreen embedders rea
 int goome_clipboard_set(goome *g, const char *utf8);
 int goome_clipboard_get(goome *g, char *buf, int cap); // full length (can be > cap-1, buf gets cut + nul), <0 error. can block ~250ms on x11/wayland
 const char *goome_drop_path(goome *g); // full path of the last GOOME_DROP, good until the next poll
+const char *goome_event_text(goome *g); // full utf-8 of the last GOOME_TEXT / GOOME_PREEDIT, good until the next poll
+int goome_preedit_cursor(goome *g); // byte offset of the caret in the last preedit text
+int goome_text_input(goome *g, int on, const goome_rect *caret); // ime on/off, caret (logical) is where the candidate window goes
 
 int goome_push(goome *g, const goome_event *ev); // queue an event, any mode
 int goome_resize(goome *g, int w, int h, double scale); // offscreen only
