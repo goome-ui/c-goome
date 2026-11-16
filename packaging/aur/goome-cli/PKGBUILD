@@ -1,6 +1,6 @@
 # Maintainer: sevvy-wevvy <163466717+sevvy-wevvy@users.noreply.github.com>
 pkgname=goome-cli
-pkgver=0.5.0
+pkgver=0.5.2
 pkgrel=1
 pkgdesc="goome new: makes a new goome project from the template repos"
 arch=('any')
@@ -8,7 +8,7 @@ url="https://github.com/goome-ui/goome-cli"
 license=('GPL-3.0-only')
 depends=('python')
 source=("$pkgname-$pkgver.tar.gz::https://github.com/goome-ui/goome-cli/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('aa18df3c7cfe4c35cb61a1ada252833831e87ad06937ccb06f864c6c2f82c7af')
+sha256sums=('d490ca7ef4a8c57dd8e2b6a2775f88bbcf46ebe7058966aed8e5019ee24c2637')
 
 package() {
   cd "$pkgname-$pkgver"

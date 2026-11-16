@@ -1,11 +1,11 @@
 pkgbase = goome
 	pkgdesc = Single header C library for see-through always on top overlays, app windows and offscreen ui
-	pkgver = 0.5.0
+	pkgver = 0.5.2
 	pkgrel = 1
 	url = https://github.com/goome-ui/c-goome
 	arch = any
 	license = GPL-3.0-only
-	source = goome-0.5.0.tar.gz::https://github.com/goome-ui/c-goome/archive/refs/tags/v0.5.0.tar.gz
-	sha256sums = c8dcc3b40ba81341d5aaca160696e45f71aee4a4d453b08d5911e405e83bd6e6
+	source = goome-0.5.2.tar.gz::https://github.com/goome-ui/c-goome/archive/refs/tags/v0.5.2.tar.gz
+	sha256sums = eb9536a247020f9fb7dbb487a92bfe939dabbda7463780ffc499096c99b3927f
 
 pkgname = goome
