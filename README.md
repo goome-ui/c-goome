@@ -719,6 +719,31 @@ For huge lists theres <code>goome_ui_list_clip</code>, it only draws the rows yo
 </details>
 
 <details>
+<summary align="center"><b>🦻 Screen Readers 🦻</b></summary>
+
+<br>
+
+<p align="center">
+The ui kit tells screen readers whats on screen. Every frame it builds a tree out of the widgets you drew (role, name, value, where it is, checked / expanded / selected / focused) and hands it to the os a11y api, the same one Orca, Narrator, NVDA and VoiceOver read from. When they press a button, move a slider, type into a box, open a combo or focus something it comes back as normal input, so your <code>if (goome_ui_button(...))</code> just fires like a click did. You dont have to write anything for the built in widgets.<br> <br>
+Its on by default in window mode and off for overlays and offscreen. <code>goome_ui_a11y(u, 0)</code> turns it off, <code>goome_ui_a11y(u, 1)</code> turns it on anywhere. <code>GOOME_A11Y=0</code> keeps it away from the os but still builds the tree.<br> <br>
+<b>Linux</b> - AT-SPI2, goome talks to the a11y bus itself through libdbus (loaded at runtime like everything else)<br>
+<b>Windows</b> - a UI Automation provider, Invoke / Toggle / Value / RangeValue / Selection / ExpandCollapse<br>
+<b>Mac</b> - NSAccessibility on the goome view, every widget gets its own element<br> <br>
+For your own <code>goome_ui_custom</code> items call <code>goome_ui_a11y_role(u, GOOME_ROLE_BUTTON, "Knob")</code> and <code>goome_ui_a11y_value(u, "11")</code> right before it. A press from the screen reader shows up as <code>it.clicked</code>.
+</p>
+
+```c
+goome_ui_a11y_role(u, GOOME_ROLE_SLIDER, "Hue");
+goome_ui_a11y_value(u, hue_text);
+goome_ui_custom(u, "hue", 200, 24, GOOME_ITEM_FOCUSABLE | GOOME_ITEM_DRAG_X, &it);
+```
+
+<p align="center">
+Engines with their own a11y can read the tree after <code>goome_ui_end</code> with <code>goome_a11y_tree(u, nodes, max)</code>. Ids stay the same every frame. To send a screen reader action back, push a <code>GOOME_CONTROL</code> event with msg <code>a11y press 123</code> (also <code>focus</code>, <code>expand</code>, <code>collapse</code> and <code>set 123 text</code>) and feed it to the ui like any other event.
+</p>
+</details>
+
+<details>
 <summary align="center"><b>🧪 Testing Without A Screen 🧪</b></summary>
 
 <br>
