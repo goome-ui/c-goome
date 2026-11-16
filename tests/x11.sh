@@ -4,6 +4,7 @@
 #   tests/x11.sh asan     builds hello, grab, app and the probe with asan+ubsan first
 #   X11_ONLY=win          just the window mode part
 #   X11_ONLY=grab         just the input grab part
+#   X11_ONLY=late         just the hit rects that come after the overlay is up
 # heavy (Xvfb + picom), takes a few minutes
 set -u
 repo=$(cd "$(dirname "$0")/.." && pwd)
@@ -24,7 +25,7 @@ if [ "${1:-}" = asan ]; then
   export LSAN_OPTIONS=suppressions=$S/lsan.supp
 fi
 mkdir -p bin
-for f in "$repo"/examples/hello.c "$repo"/examples/grab.c "$repo"/examples/app.c "$repo"/tests/x11_probe.c "$repo"/tests/win_two.c "$repo"/tests/grab_ui.c; do
+for f in "$repo"/examples/hello.c "$repo"/examples/grab.c "$repo"/examples/app.c "$repo"/tests/x11_probe.c "$repo"/tests/win_two.c "$repo"/tests/grab_ui.c "$repo"/tests/late_hits.c; do
   cc "${cflags[@]}" -o "bin/$(basename "${f%.c}")" "$f" "$repo"/src/*.c || exit 1
 done
 B=$S/bin
@@ -135,7 +136,7 @@ EOF
 python3 px.py pattern pat.ppm 1280 720
 
 xpid=
-stop_x() { pkill -P $$ -f 'xev|display|picom|hello|probe|xfwm4|app|xsel|win_two' 2>/dev/null; [ -n "$xpid" ] && kill "$xpid" 2>/dev/null; wait 2>/dev/null; xpid=; }
+stop_x() { pkill -P $$ -f 'xev|display|picom|hello|probe|xfwm4|app|xsel|win_two|late_hits' 2>/dev/null; [ -n "$xpid" ] && kill "$xpid" 2>/dev/null; wait 2>/dev/null; xpid=; }
 start_x() { # size, compositor 0/1
   Xvfb "$DPY" -screen 0 "$1"x24 -nolisten tcp -noreset >"xvfb-$tag.log" 2>&1 &
   xpid=$!
@@ -531,6 +532,56 @@ run_grab() {
   stop_x
 }
 
+maps() { grep -A2 '^MapNotify' "$1" | grep -c 'override YES'; }
+
+run_late() {
+  tag=late-$1
+  local wm=$2
+  echo "== $tag"
+  start_x 1280x720 0
+  if [ "$wm" != none ]; then "$wm" --compositor=off >"wm-$tag.log" 2>&1 & sleep 1.5; fi
+  xev -geometry 300x200+900+450 -event button >"xev-$tag.log" 2>&1 &
+  sleep 0.5
+  local L=late-$tag.log M=map-$tag.log
+  for mode in key 1500; do
+    "$B/late_hits" $mode >"$L" 2>"late-$tag.err" &
+    local lp=$!
+    waitfor "$L" '^ready' 40
+    sleep 0.3
+    xev -root -event substructure >"$M" 2>&1 &
+    local mp=$!
+    sleep 0.3
+    xdotool mousemove 400 260 click 1
+    sleep 0.3
+    check "$tag $mode: shown with no hit rects, clicks go through" bash -c "! grep -q '^down' $L"
+    if [ $mode = key ]; then
+      P2 key.py ctrl+shift+F6
+      check "$tag key: hotkey fires" waitfor "$L" '^hotkey id 1$'
+    fi
+    check "$tag $mode: hit rects come on" waitfor "$L" '^hits on$' 40
+    sleep 0.3
+    check "$tag $mode: first hit rects map a fresh window" test "$(maps "$M")" -ge 1
+    xdotool mousemove 405 265 click 1
+    check "$tag $mode: click on the box reaches it" waitfor "$L" '^down 405,265$'
+    check "$tag $mode: old window is gone" test "$(xdotool search --name '^goome late$' | wc -l)" = 1
+    if [ $mode = key ]; then
+      P2 key.py ctrl+shift+F6
+      waitfor "$L" '^hits off$'
+      sleep 0.3
+      xdotool mousemove 410 270 click 1
+      sleep 0.3
+      check "$tag key: menu off, clicks go through again" bash -c "! grep -q '^down 410,270' $L"
+      P2 key.py ctrl+shift+F6
+      sleep 0.5
+      xdotool mousemove 415 270 click 1
+      check "$tag key: menu back on, clicks work" waitfor "$L" '^down 415,270$'
+    fi
+    kill $lp $mp 2>/dev/null; wait $lp $mp 2>/dev/null
+    check "$tag $mode: asan/ubsan clean" bash -c "! grep -qE 'ERROR: (Address|Leak)Sanitizer|runtime error' late-$tag.err"
+  done
+  stop_x
+}
+
 echo "== no display"
 (unset DISPLAY; GOOME_BACKEND=x11 "$B/hello" >nodpy.log 2>&1); rc=$?
 check "open: no DISPLAY fails cleanly (rc $rc)" test $rc = 1
@@ -545,7 +596,11 @@ if [ -z "${X11_ONLY:-}" ] || [ "$X11_ONLY" = grab ]; then
   run_grab nowm none
   if command -v xfwm4 >/dev/null; then run_grab xfwm4 xfwm4; else echo "skip grab with a window manager, no xfwm4"; fi
 fi
-if [ "${X11_ONLY:-}" = grab ]; then
+if [ -z "${X11_ONLY:-}" ] || [ "$X11_ONLY" = late ]; then
+  run_late nowm none
+  if command -v xfwm4 >/dev/null; then run_late xfwm4 xfwm4; else echo "skip late hit rects with a window manager, no xfwm4"; fi
+fi
+if [ "${X11_ONLY:-}" = grab ] || [ "${X11_ONLY:-}" = late ]; then
   :
 elif command -v xsel >/dev/null; then
   run_win nowm none 0
