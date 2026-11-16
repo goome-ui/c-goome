@@ -34,7 +34,7 @@ enum { GOOME_AUTO, GOOME_WAYLAND, GOOME_GNOME, GOOME_PORTAL, GOOME_X11, GOOME_WI
 enum { GOOME_MODE_OVERLAY, GOOME_MODE_WINDOW, GOOME_MODE_OFFSCREEN };
 enum {
     GOOME_WINDOW_RESIZABLE = 1, GOOME_WINDOW_BORDERLESS = 2, GOOME_WINDOW_TRANSPARENT = 4,
-    GOOME_WINDOW_ON_TOP = 8, GOOME_WINDOW_HIDDEN = 16, GOOME_WINDOW_CENTER = 32,
+    GOOME_WINDOW_ON_TOP = 8, GOOME_WINDOW_HIDDEN = 16, GOOME_WINDOW_CENTER = 32, GOOME_WINDOW_NO_TITLEBAR = 64,
 };
 
 enum {
@@ -1090,6 +1090,11 @@ static int gm_backend_from(const char *s)
     return -1;
 }
 
+#ifdef GOOME_WEB
+void gmw_claim(goome_opts *o);
+void gmw_opened(goome *g);
+#endif
+
 goome *goome_open(const goome_opts *o, int *err)
 {
     goome *g = calloc(1, sizeof(*g));
@@ -1102,6 +1107,14 @@ goome *goome_open(const goome_opts *o, int *err)
     if (g->opts.state_dir) snprintf(g->state_dir, sizeof(g->state_dir), "%s", g->opts.state_dir);
     g->opts.title = g->title;
     g->opts.state_dir = g->state_dir[0] ? g->state_dir : NULL;
+#ifdef GOOME_WEB
+    if (g->opts.mode != GOOME_MODE_WINDOW) {
+        if (err) *err = GOOME_ENOTSUP;
+        free(g);
+        return NULL;
+    }
+    gmw_claim(&g->opts);
+#endif
     if (g->opts.width <= 0) g->opts.width = 960;
     if (g->opts.height <= 0) g->opts.height = 640;
     if (!(g->opts.scale > 0)) g->opts.scale = 1;
@@ -1116,6 +1129,9 @@ goome *goome_open(const goome_opts *o, int *err)
         return NULL;
     }
     gm_ctl_open(g);
+#ifdef GOOME_WEB
+    gmw_opened(g);
+#endif
     if (err) *err = GOOME_OK;
     return g;
 }
@@ -12864,6 +12880,7 @@ int goome_ui_app(goome_ui *u, const char *title, int flags)
     goome_rect a = u->area;
     ui_box box = ui_bx(a.x, a.y, a.w, a.h);
     int win = goome_mode(g) == GOOME_MODE_WINDOW, wf = g->opts.window_flags;
+    if (wf & GOOME_WINDOW_NO_TITLEBAR) flags &= ~GOOME_APP_TITLEBAR;
     int st = win ? goome_window_get_state(g) : GOOME_STATE_NORMAL;
     if (st < 0) st = GOOME_STATE_NORMAL;
     int max = st == GOOME_STATE_MAXIMIZED || st == GOOME_STATE_FULLSCREEN;

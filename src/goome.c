@@ -396,6 +396,11 @@ static int gm_backend_from(const char *s)
     return -1;
 }
 
+#ifdef GOOME_WEB
+void gmw_claim(goome_opts *o);
+void gmw_opened(goome *g);
+#endif
+
 goome *goome_open(const goome_opts *o, int *err)
 {
     goome *g = calloc(1, sizeof(*g));
@@ -408,6 +413,14 @@ goome *goome_open(const goome_opts *o, int *err)
     if (g->opts.state_dir) snprintf(g->state_dir, sizeof(g->state_dir), "%s", g->opts.state_dir);
     g->opts.title = g->title;
     g->opts.state_dir = g->state_dir[0] ? g->state_dir : NULL;
+#ifdef GOOME_WEB
+    if (g->opts.mode != GOOME_MODE_WINDOW) {
+        if (err) *err = GOOME_ENOTSUP;
+        free(g);
+        return NULL;
+    }
+    gmw_claim(&g->opts);
+#endif
     if (g->opts.width <= 0) g->opts.width = 960;
     if (g->opts.height <= 0) g->opts.height = 640;
     if (!(g->opts.scale > 0)) g->opts.scale = 1;
@@ -422,6 +435,9 @@ goome *goome_open(const goome_opts *o, int *err)
         return NULL;
     }
     gm_ctl_open(g);
+#ifdef GOOME_WEB
+    gmw_opened(g);
+#endif
     if (err) *err = GOOME_OK;
     return g;
 }
