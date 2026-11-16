@@ -15,6 +15,7 @@
 #define UI_MAXWIN 64
 #define UI_MAXHIT 256
 #define UI_MAXKEY 64
+#define UI_IME_KEY 0x7E000
 #define UI_MAXFR 16
 #define UI_MAXSCR 16
 #define UI_MAXCLIP 32
@@ -243,6 +244,10 @@ struct goome_ui {
     char *undo;
     int undo_cap, undo_cur, undo_kind;
     uint32_t undo_id;
+    char *ime_buf, *ime_pre;
+    int ime_len, ime_cap, ime_at[UI_MAXKEY], ime_plen, ime_pcap, ime_pcur, ime_want, ime_on;
+    uint32_t ime_id;
+    goome_rect ime_rect, ime_sent;
 
     struct ui_ed_s *eds[UI_MAXED];
     goome_font *mono;
@@ -992,6 +997,8 @@ void goome_ui_free(goome_ui *u)
     for (int i = 0; i < UI_MAXPOP; i++) ui_list_free(&u->plist[i]);
     for (int i = 0; i < UI_NBLK; i++) free(u->blk[i]);
     free(u->undo);
+    if (u->ime_on) goome_text_input(u->g, 0, NULL);
+    free(u->ime_buf), free(u->ime_pre);
     free(u->idx);
     ui_ed_free_all(u);
     free(u->dd_data);
@@ -1164,10 +1171,15 @@ static void ui_keys_pre(goome_ui *u)
     }
 }
 
+static int ui_ime_feed(goome_ui *u, const goome_event *e);
+static void ui_ime_sync(goome_ui *u);
+
 int goome_ui_feed(goome_ui *u, const goome_event *e)
 {
     if (!u || !e) return 0;
     switch (e->type) {
+    case GOOME_TEXT:
+    case GOOME_PREEDIT: return ui_ime_feed(u, e);
     case GOOME_MOTION:
         u->mx = e->x, u->my = e->y, u->got_pos = 1;
         return u->active || ui_over(u, e->x, e->y);
@@ -1398,6 +1410,7 @@ void goome_ui_end(goome_ui *u)
     if (u->tab_new) ui_focus_to(u, u->tab_new, 1, u->tab_kind), u->tab_came = 1;
     u->tab_new = 0, u->tab_req = 0, u->rad_only = 0, u->want_focus = 0;
     if (goome_mode(u->g) == GOOME_MODE_OVERLAY) ui_keyboard(u, u->focus || u->npop);
+    ui_ime_sync(u);
     if (u->popup && !u->pop_seen) u->popup = 0;
     ui_grab_set(u, u->down && u->grab_frame > 0 && u->frame - u->grab_frame < (u->nmon > 1 ? u->nmon : 1) && (u->auto_grab & GOOME_WANT_MOUSE));
     if (!u->down) u->active = 0;
@@ -2291,6 +2304,106 @@ static int ui_num_ok(const char *t)
     return 1;
 }
 
+static int ui_ime_keep(char **b, int *cap, int at, const char *s, int n)
+{
+    if (at + n + 1 > *cap) {
+        int c = (at + n + 1) * 2;
+        char *m = realloc(*b, (size_t)c);
+        if (!m) return 0;
+        *b = m, *cap = c;
+    }
+    memcpy(*b + at, s, (size_t)n);
+    (*b)[at + n] = 0;
+    return 1;
+}
+
+static int ui_ime_feed(goome_ui *u, const goome_event *e)
+{
+    const char *full = goome_event_text(u->g), *s = e->msg;
+    size_t ml = strlen(e->msg);
+    if (ml >= sizeof(e->msg) - 4 && !strncmp(full, e->msg, ml)) s = full;
+    int n = (int)strlen(s);
+    if (e->type == GOOME_PREEDIT) {
+        if (!ui_ime_keep(&u->ime_pre, &u->ime_pcap, 0, s, n)) return 0;
+        u->ime_plen = n, u->ime_pcur = e->id < 0 ? 0 : e->id > n ? n : e->id;
+        return u->focus != 0;
+    }
+    if (!u->focus || u->nkeys >= UI_MAXKEY || !n) return u->focus != 0;
+    if (!u->nkeys) u->ime_len = 0;
+    if (!ui_ime_keep(&u->ime_buf, &u->ime_cap, u->ime_len, s, n)) return 1;
+    u->ime_at[u->nkeys] = u->ime_len, u->ime_len += n + 1;
+    ui_key *k = &u->keys[u->nkeys++];
+    k->key = UI_IME_KEY, k->mods = 0, k->text[0] = 0;
+    return 1;
+}
+
+static char *ui_ime_take(goome_ui *u, int k, int lines, int num, int *n)
+{
+    const char *s = u->ime_buf + u->ime_at[k];
+    int len = (int)strlen(s), w = 0;
+    char *t = malloc((size_t)len + 1);
+    *n = 0;
+    if (!t) return NULL;
+    for (int i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)s[i];
+        char one[2] = {(char)c, 0};
+        if (c == '\r') continue;
+        if (c == '\n' || c == '\t') c = lines && c == '\n' ? '\n' : ' ';
+        else if (c < 32 || c == 127) continue;
+        if (num && !ui_num_ok(one)) continue;
+        t[w++] = (char)c;
+    }
+    t[w] = 0;
+    *n = w;
+    return t;
+}
+
+static int ui_ime_commit(goome_ui *u, int k, uint32_t id, char *buf, int *len, int cap, int *cur, int *anc, int num)
+{
+    int n, ch = 0, lo = *anc < *cur ? *anc : *cur, hi = *anc < *cur ? *cur : *anc;
+    char *t = ui_ime_take(u, k, 0, num, &n);
+    if (t && n > 0) {
+        ui_undo_keep(u, id, buf, *len, *cur, 3);
+        *cur = ui_del(buf, len, lo, hi);
+        *cur += ui_ins(buf, len, cap, *cur, t, n);
+        *anc = *cur, ch = 1;
+        u->undo_kind = 0;
+    }
+    free(t);
+    return ch;
+}
+
+static void ui_ime_show(goome_ui *u, uint32_t id, double x, double y, double h)
+{
+    const goome_theme *th = &u->th;
+    if (u->ime_id != id) u->ime_id = id, u->ime_plen = 0;
+    u->ime_want = 1;
+    double w = 0;
+    if (u->ime_plen > 0) {
+        double lh = goome_text_line_height(th->font, u->size), ty = ui_round(y + (h - lh) / 2);
+        double cx = ui_tw(u, u->ime_pre, u->ime_pcur, 0);
+        w = ui_tw(u, u->ime_pre, u->ime_plen, 0);
+        ui_rect(u, ui_bx(x - 1, y, w + 3, h), 2, th->input_bg | 0xFF000000u);
+        ui_text(u, x, ty, u->ime_pre, u->ime_plen, 0, th->text);
+        ui_rect(u, ui_bx(x, ty + lh - 1, w, 1), 0, th->text);
+        ui_rect(u, ui_bx(x + cx, y + 1, th->caret_w > 0 ? th->caret_w : 1.5, h - 2), 0, ui_c(th->caret, th->accent));
+    }
+    u->ime_rect = (goome_rect){(int)ui_floor(x), (int)ui_floor(y), (int)ui_floor(w + 1.999), (int)ui_floor(h + 0.999)};
+}
+
+static void ui_ime_sync(goome_ui *u)
+{
+    int want = u->ime_want && u->focus && u->focus == u->ime_id;
+    u->ime_want = 0;
+    if (want && (!u->ime_on || memcmp(&u->ime_rect, &u->ime_sent, sizeof(goome_rect)))) {
+        goome_text_input(u->g, 1, &u->ime_rect);
+        u->ime_on = 1, u->ime_sent = u->ime_rect;
+    } else if (!want && u->ime_on) {
+        goome_text_input(u->g, 0, NULL);
+        u->ime_on = 0, u->ime_plen = 0, u->ime_id = 0;
+    }
+}
+
 int goome_ui_input(goome_ui *u, const char *label, char *buf, int cap) { return goome_ui_input_ex(u, label, buf, cap, 0, NULL); }
 
 int goome_ui_input_ex(goome_ui *u, const char *label, char *buf, int cap, int flags, const char *hint)
@@ -2349,6 +2462,11 @@ int goome_ui_input_ex(goome_ui *u, const char *label, char *buf, int cap, int fl
             ui_key *e = &u->keys[k];
             int key = e->key, m = e->mods, sh = m & GOOME_SHIFT, act = ui_act(u, key, m);
             int lo = anc < cur ? anc : cur, hi = anc < cur ? cur : anc, has = lo != hi;
+            if (key == UI_IME_KEY) {
+                if (!ro) ch |= ui_ime_commit(u, k, id, buf, &len, cap, &cur, &anc, num);
+                s->v[3] = (double)u->now;
+                continue;
+            }
             if (!key && !e->text[0]) continue;
             s->v[3] = (double)u->now;
             if (ro && (act == GOOME_ACT_PASTE || act == GOOME_ACT_UNDO || act == GOOME_ACT_REDO || act == GOOME_ACT_DEL_WORD_LEFT || act == GOOME_ACT_DEL_WORD_RIGHT)) continue;
@@ -2467,6 +2585,7 @@ int goome_ui_input_ex(goome_ui *u, const char *label, char *buf, int cap, int fl
     if (focused) {
         long t = u->now - (long)s->v[3], bl = u->cfg.blink_ms;
         if (bl <= 0 || (t / bl) % 2 == 0) ui_rect(u, ui_bx(x + cx, b.y + b.h / 2 - u->lh / 2 + 1, th->caret_w > 0 ? th->caret_w : 1.5, u->lh - 2), 0, ui_c(th->caret, th->accent));
+        if (!pw && !ro) ui_ime_show(u, id, x + ui_cx(u, buf, len, anc < cur ? anc : cur, NULL, 0), b.y + b.h / 2 - u->lh / 2, u->lh);
     }
     ui_clip_pop(u);
     return enter ? 2 : ch;
@@ -4334,6 +4453,13 @@ int goome_ui_text_edit(goome_ui *u, const char *id, char *buf, int cap, double h
             int lo = e->anc < e->cur ? e->anc : e->cur, hi = e->anc < e->cur ? e->cur : e->anc, has = lo != hi;
             int c = e->cur, keepx = 0, nav = 1, kind = -1;
             e->blink = u->now;
+            if (key == UI_IME_KEY) {
+                int n;
+                char *t = ro ? NULL : ui_ime_take(u, k, 1, 0, &n);
+                if (t && n) e->brk = 1, ch |= ui_ed_edit(e, buf, &len, cap, lo, hi, t, n, 0), e->brk = 1, moved = 1;
+                free(t);
+                continue;
+            }
             if (act == GOOME_ACT_SELECT_ALL) e->anc = 0, c = len, nav = 0;
             else if (act == GOOME_ACT_COPY || act == GOOME_ACT_CUT) {
                 nav = 0;
@@ -4534,6 +4660,11 @@ int goome_ui_text_edit(goome_ui *u, const char *id, char *buf, int cap, double h
         long t = u->now - e->blink, bl = u->cfg.blink_ms;
         double cwd = th->caret_w > 0 ? th->caret_w : 2;
         if (bl <= 0 || (t / bl) % 2 == 0) ui_rect(u, ui_bx(ox + cx - (th->caret_w > 0 ? 0 : 0.5), oy + cg * rh + 1, cwd, rh - 2), 1, ui_c(th->caret, th->accent));
+        if (!ro) {
+            double ix = cx;
+            int ig = lo < e->cur ? ui_ed_locate(u, e, buf, len, lo, &ix) : cg;
+            ui_ime_show(u, eid, ox + ix, oy + ig * rh, rh);
+        }
     }
     ui_clip_pop(u);
     if (nn) {
