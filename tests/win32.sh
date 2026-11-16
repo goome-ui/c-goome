@@ -256,7 +256,7 @@ grep -q "^window 640x400 scale 1.50 px 960x600" "$out/wm-144.txt" && grep -q "^o
 setdpi 96
 
 # 8 ime: imm32 composition through wines own ime, set a string then finish it
-timeout 60 wine "$B/win_ime.exe" > "$out/ime.txt" 2>&1
+timeout 60 wine "$B/win_ime.exe" 2>&1 | tr -d '\r' > "$out/ime.txt"
 grep -q "^ime rc 0" "$out/ime.txt" && grep -q "^context yes" "$out/ime.txt" && ok "ime turns on" || bad "ime turns on: $(head -3 "$out/ime.txt")"
 grep -q "^preedit 'にほん' 9$" "$out/ime.txt" && ok "ime preedit with the caret at the end" || bad "ime preedit: $(grep preedit "$out/ime.txt")"
 grep -q "^text にほん$" "$out/ime.txt" && grep -q "^preedit '' 0$" "$out/ime.txt" && ok "ime commit clears the preedit" || bad "ime commit: $(grep -v preedit "$out/ime.txt")"
