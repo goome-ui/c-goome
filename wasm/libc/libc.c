@@ -151,6 +151,13 @@ size_t strlen(const char *s)
     return (size_t)(p - s);
 }
 
+char *strcpy(char *d, const char *s)
+{
+    char *r = d;
+    while ((*d++ = *s++)) {}
+    return r;
+}
+
 int strcmp(const char *a, const char *b)
 {
     while (*a && *a == *b) a++, b++;
