@@ -521,7 +521,7 @@ If you use it you get smooth shapes and images, plus real text. Only what change
 - clipping with `goome_clip_push` / `goome_clip_pop`, 16 deep
 - `goome_bitmap_load` reads PNG, JPEG, BMP, PPM and QOI (it looks at whats in the file, not the name), `goome_draw_bitmap` draws them scaled, with rounded corners and a tint
 - `goome_draw_bitmap_nine` stretches a bitmap with fixed corners, for skins
-- `goome_font_load` takes .ttf, .otf and .ttc, `goome_font_system(NULL)` finds the desktops normal ui font. Kerning and utf-8 work. Pass NULL as the font and you get the 6 built in bitmap fonts (same ones open-chease uses)
+- `goome_font_load` takes .ttf, .otf and .ttc, `goome_font_system(NULL)` finds the desktops normal ui font. Kerning and utf-8 work. Pass NULL as the font and you get the 6 built in bitmap fonts (same ones open-chease uses). Emoji come out in color, chars a font doesnt have come from `goome_font_fallback` fonts (the system font finds the emoji font by itself), and Arabic and Hebrew go right to left, `goome_text_dir` forces a direction
 
 <p align="center">
 <code>#define GOOME_NO_DRAW</code> before the implementation leaves all of it out (and the ui kit too).
