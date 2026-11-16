@@ -12747,7 +12747,7 @@ int goome_ui_modal_begin(goome_ui *u, const char *title, int *open)
     }
     if (!p && !(p = ui_pop_push(u, pid, UP_MODAL, UA_CENTER, ui_bx(0, 0, 0, 0)))) return 0;
     double pad = ui_round(th->pad * 2);
-    if (!ui_pop_begin(u, p, 380, pad)) return 0;
+    if (!ui_pop_begin(u, p, ui_min(380, u->area.w - 24), pad)) return 0;
     ui_frame *f = &u->fr[u->nfr - 1];
     f->flag = open;
     ui_box d = f->box;
