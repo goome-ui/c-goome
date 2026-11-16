@@ -1,4 +1,4 @@
-// goome 0.5.0, one file version. https://github.com/goome-ui/c-goome (GPL-3.0)
+// goome 0.5.2, one file version. https://github.com/goome-ui/c-goome (GPL-3.0)
 // in exactly one .c file, before any other include:
 //   #define GOOME_IMPLEMENTATION
 //   #include "goome.h"
@@ -26,7 +26,7 @@
 extern "C" {
 #endif
 
-#define GOOME_VERSION "0.5.0"
+#define GOOME_VERSION "0.5.2"
 
 typedef struct goome goome;
 
