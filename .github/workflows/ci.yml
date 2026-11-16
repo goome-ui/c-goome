@@ -140,6 +140,8 @@ jobs:
         run: WERROR=1 ./wasm/build.sh
       - name: wasm frames match native
         run: node wasm/test/run.mjs
+      - name: web apps build and run
+        run: node wasm/test/web.mjs
       - name: size
         run: |
           s=$(wc -c < wasm/out/goome.wasm)

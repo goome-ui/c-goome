@@ -17,6 +17,12 @@ FILE *stdin, *stdout, *stderr;
 
 extern unsigned char __heap_base;
 
+#ifdef LC_CONSOLE
+__attribute__((import_module("env"), import_name("gmw_console"))) void lc_console(const char *s, int n);
+#else
+static void lc_console(const char *s, int n) {}
+#endif
+
 typedef struct lc_blk {
     size_t size;
     struct lc_blk *next;
@@ -206,11 +212,32 @@ char *getenv(const char *name) { return NULL; }
 FILE *fopen(const char *path, const char *mode) { return NULL; }
 int fclose(FILE *f) { return EOF; }
 size_t fread(void *p, size_t sz, size_t n, FILE *f) { return 0; }
-size_t fwrite(const void *p, size_t sz, size_t n, FILE *f) { return 0; }
+size_t fwrite(const void *p, size_t sz, size_t n, FILE *f)
+{
+    lc_console((const char *)p, (int)(sz * n));
+    return n;
+}
 int ferror(FILE *f) { return 1; }
 int fgetc(FILE *f) { return EOF; }
-int fputs(const char *s, FILE *f) { return EOF; }
-int puts(const char *s) { return EOF; }
+int fputs(const char *s, FILE *f)
+{
+    lc_console(s, (int)strlen(s));
+    return 1;
+}
+int puts(const char *s)
+{
+    lc_console(s, (int)strlen(s));
+    lc_console("\n", 1);
+    return 1;
+}
+int fputc(int c, FILE *f)
+{
+    char b = (char)c;
+    lc_console(&b, 1);
+    return c;
+}
+int putchar(int c) { return fputc(c, NULL); }
+int fflush(FILE *f) { return 0; }
 int stat(const char *path, struct stat *st) { return -1; }
 int lstat(const char *path, struct stat *st) { return -1; }
 int fstat(int fd, struct stat *st) { return -1; }
@@ -545,8 +572,133 @@ int snprintf(char *buf, size_t n, const char *fmt, ...)
     return r;
 }
 
-int vfprintf(FILE *f, const char *fmt, va_list ap) { return 0; }
+int vfprintf(FILE *f, const char *fmt, va_list ap)
+{
+    char buf[1024];
+    int n = vsnprintf(buf, sizeof(buf), fmt, ap);
+    lc_console(buf, n < (int)sizeof(buf) ? n : (int)sizeof(buf) - 1);
+    return n;
+}
 
-int fprintf(FILE *f, const char *fmt, ...) { return 0; }
+int fprintf(FILE *f, const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int r = vfprintf(f, fmt, ap);
+    va_end(ap);
+    return r;
+}
 
-int printf(const char *fmt, ...) { return 0; }
+int printf(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int r = vfprintf(NULL, fmt, ap);
+    va_end(ap);
+    return r;
+}
+
+char *strncpy(char *d, const char *s, size_t n)
+{
+    size_t i = 0;
+    for (; i < n && s[i]; i++) d[i] = s[i];
+    for (; i < n; i++) d[i] = 0;
+    return d;
+}
+
+char *strcat(char *d, const char *s)
+{
+    strcpy(d + strlen(d), s);
+    return d;
+}
+
+char *strncat(char *d, const char *s, size_t n)
+{
+    char *e = d + strlen(d);
+    size_t i = 0;
+    for (; i < n && s[i]; i++) e[i] = s[i];
+    e[i] = 0;
+    return d;
+}
+
+char *strdup(const char *s)
+{
+    size_t n = strlen(s) + 1;
+    char *d = malloc(n);
+    if (d) memcpy(d, s, n);
+    return d;
+}
+
+int isdigit(int c) { return c >= '0' && c <= '9'; }
+int isspace(int c) { return c == ' ' || (c >= 9 && c <= 13); }
+int isalpha(int c) { return (c | 32) >= 'a' && (c | 32) <= 'z'; }
+int isalnum(int c) { return isalpha(c) || isdigit(c); }
+int isupper(int c) { return c >= 'A' && c <= 'Z'; }
+int islower(int c) { return c >= 'a' && c <= 'z'; }
+int isxdigit(int c) { return isdigit(c) || ((c | 32) >= 'a' && (c | 32) <= 'f'); }
+int ispunct(int c) { return c > 32 && c < 127 && !isalnum(c); }
+int isprint(int c) { return c >= 32 && c < 127; }
+int toupper(int c) { return islower(c) ? c - 32 : c; }
+int tolower(int c) { return isupper(c) ? c + 32 : c; }
+
+long strtol(const char *s, char **end, int base)
+{
+    while (isspace(*s)) s++;
+    int neg = 0;
+    if (*s == '-' || *s == '+') neg = *s++ == '-';
+    if ((base == 0 || base == 16) && s[0] == '0' && (s[1] | 32) == 'x') s += 2, base = 16;
+    else if (base == 0) base = s[0] == '0' ? 8 : 10;
+    long v = 0;
+    for (;; s++) {
+        int d = isdigit(*s) ? *s - '0' : isalpha(*s) ? (*s | 32) - 'a' + 10 : 99;
+        if (d >= base) break;
+        v = v * base + d;
+    }
+    if (end) *end = (char *)s;
+    return neg ? -v : v;
+}
+
+int atoi(const char *s) { return (int)strtol(s, NULL, 10); }
+
+double strtod(const char *s, char **end)
+{
+    while (isspace(*s)) s++;
+    int neg = 0;
+    if (*s == '-' || *s == '+') neg = *s++ == '-';
+    double v = 0;
+    while (isdigit(*s)) v = v * 10 + (*s++ - '0');
+    if (*s == '.') {
+        double f = 0.1;
+        for (s++; isdigit(*s); s++, f *= 0.1) v += (*s - '0') * f;
+    }
+    if ((*s | 32) == 'e' && (isdigit(s[1]) || ((s[1] == '-' || s[1] == '+') && isdigit(s[2])))) {
+        int eneg = s[1] == '-', e = 0;
+        s += isdigit(s[1]) ? 1 : 2;
+        while (isdigit(*s)) e = e * 10 + (*s++ - '0');
+        while (e--) v = eneg ? v / 10 : v * 10;
+    }
+    if (end) *end = (char *)s;
+    return neg ? -v : v;
+}
+
+double atof(const char *s) { return strtod(s, NULL); }
+
+static unsigned lc_seed = 1;
+void srand(unsigned s) { lc_seed = s; }
+int rand(void)
+{
+    lc_seed = lc_seed * 1103515245u + 12345u;
+    return (int)((lc_seed >> 16) & 0x7fff);
+}
+
+void qsort(void *base, size_t n, size_t sz, int (*cmp)(const void *, const void *))
+{
+    char *a = base, tmp[64];
+    if (sz > sizeof(tmp)) return;
+    for (size_t i = 1; i < n; i++) {
+        memcpy(tmp, a + i * sz, sz);
+        size_t j = i;
+        for (; j > 0 && cmp(a + (j - 1) * sz, tmp) > 0; j--) memcpy(a + j * sz, a + (j - 1) * sz, sz);
+        memcpy(a + j * sz, tmp, sz);
+    }
+}
