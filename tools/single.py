@@ -4,7 +4,7 @@ import re, sys
 from pathlib import Path
 
 root = Path(__file__).resolve().parent.parent
-order = ["goome.c", "draw.c", "image.c", "font.c", "ui.c", "test.c", "offscreen.c", "x11.c", "wl.c", "gnome.c", "win32.c", "macos.c"]
+order = ["goome.c", "draw.c", "image.c", "font.c", "ui.c", "a11y.c", "test.c", "offscreen.c", "x11.c", "wl.c", "gnome.c", "win32.c", "macos.c", "atspi.c", "uia.c", "macax.c"]
 seen = set()
 
 def inline(path):

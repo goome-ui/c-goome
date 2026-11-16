@@ -484,6 +484,25 @@ typedef struct {
 goome_ui_config *goome_ui_cfg(goome_ui *u);
 void goome_ui_config_default(goome_ui_config *c);
 int goome_ui_bind(goome_ui *u, int act, const char *combos);
+
+enum {
+    GOOME_ROLE_NONE, GOOME_ROLE_WINDOW, GOOME_ROLE_BUTTON, GOOME_ROLE_CHECKBOX, GOOME_ROLE_RADIO, GOOME_ROLE_SLIDER, GOOME_ROLE_TEXT,
+    GOOME_ROLE_INPUT, GOOME_ROLE_COMBO, GOOME_ROLE_LIST, GOOME_ROLE_ITEM, GOOME_ROLE_TAB, GOOME_ROLE_MENU, GOOME_ROLE_MENUITEM,
+    GOOME_ROLE_TABLE, GOOME_ROLE_TREE, GOOME_ROLE_PROGRESS, GOOME_ROLE_IMAGE, GOOME_ROLE_GROUP, GOOME_ROLE_DIALOG,
+};
+enum { GOOME_A11Y_FOCUSED = 1, GOOME_A11Y_CHECKED = 2, GOOME_A11Y_DISABLED = 4, GOOME_A11Y_EXPANDED = 8, GOOME_A11Y_SELECTED = 16 };
+typedef struct {
+    int role, parent, states;
+    double x, y, w, h;
+    char label[96], value[64];
+    uint32_t id;
+    double num, min, max;
+    int caret;
+} goome_a11y_node;
+void goome_ui_a11y(goome_ui *u, int on);
+void goome_ui_a11y_role(goome_ui *u, int role, const char *label);
+void goome_ui_a11y_value(goome_ui *u, const char *value);
+int goome_a11y_tree(goome_ui *u, goome_a11y_node *out, int max);
 #endif
 
 #ifdef __cplusplus

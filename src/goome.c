@@ -440,6 +440,7 @@ void goome_close(goome *g)
     if (!g) return;
     if (g->cap && g->cap_state == 1 && g->cap->close) g->cap->close(g);
     if (g->ov && g->ov->grab && g->grab_req) g->ov->grab(g, 0);
+    gm_ax_close(g);
     if (g->ov) g->ov->close(g);
 #ifndef _WIN32
     if (g->ctl_fd >= 0) close(g->ctl_fd);
@@ -541,6 +542,7 @@ int goome_poll(goome *g, goome_event *ev, int timeout_ms)
     long end = goome_now_ms() + (timeout_ms > 0 ? timeout_ms : 0);
     for (;;) {
         gm_ctl_read(g);
+        int axw = gm_ax_pump(g);
         if (g->qlen) {
             *ev = g->q[g->qhead];
             g->qhead = (g->qhead + 1) % GM_QLEN, g->qlen--;
@@ -551,6 +553,7 @@ int goome_poll(goome *g, goome_event *ev, int timeout_ms)
         long left = end - goome_now_ms();
         if (left < 0) left = 0;
         if (g->ctl_fd >= 0 && left > 100) left = 100;
+        if (axw >= 0 && left > axw) left = axw;
         int r = g->ov->wait(g, (int)left);
         if (r < 0) {
             goome_event q = {.type = GOOME_QUIT};

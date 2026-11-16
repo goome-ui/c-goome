@@ -2798,6 +2798,190 @@ static void ime(void)
     CHECK(h[1] == 0x2e20540fu && h[2] == 0xceafcbadu && edh == 0xc9c1add5u);
 }
 
+typedef struct {
+    goome *g;
+    goome_ui *u;
+    int ok, dark, mode, fruit, tab, open, menu_hits, custom_hits, combo_ret;
+    double vol;
+    char name[64], note[256];
+    goome_a11y_node n[256];
+    int count;
+} ax_t;
+
+static void ax_frame(ax_t *k)
+{
+    static const char *const fruits[] = {"Mango", "Kiwi", "Fig"};
+    static const char *const tabs[] = {"One", "Two"};
+    goome_event ev;
+    while (goome_poll(k->g, &ev, 0) > 0) goome_ui_feed(k->u, &ev);
+    if (!goome_ui_begin(k->u, 0)) return;
+    goome_ui_app(k->u, "Demo", GOOME_APP_TITLEBAR | GOOME_APP_STATUSBAR);
+    goome_ui_label(k->u, "Hello there");
+    if (goome_ui_button(k->u, "OK")) k->ok++;
+    goome_ui_checkbox(k->u, "Dark", &k->dark);
+    goome_ui_radio(k->u, "Big", &k->mode, 1);
+    goome_ui_slider(k->u, "Volume", &k->vol, 0, 10, "%.1f");
+    goome_ui_input(k->u, "Name", k->name, sizeof(k->name));
+    k->combo_ret |= goome_ui_combo(k->u, "Fruit", &k->fruit, fruits, 3);
+    goome_ui_tabs(k->u, "tabs", tabs, 2, &k->tab);
+    if (goome_ui_tree(k->u, "Folder", &k->open)) {
+        goome_ui_label(k->u, "inside");
+        goome_ui_tree_end(k->u);
+    }
+    goome_ui_progress(k->u, 0.25, NULL);
+    goome_ui_text_edit(k->u, "Notes", k->note, sizeof(k->note), 60, 0);
+    goome_ui_a11y_role(k->u, GOOME_ROLE_BUTTON, "Knob");
+    goome_ui_a11y_value(k->u, "11");
+    goome_ui_item it;
+    goome_ui_custom(k->u, "knob", 40, 40, 0, &it);
+    if (it.clicked) k->custom_hits++;
+    goome_ui_statusbar(k->u, "ready");
+    goome_ui_app_end(k->u);
+    goome_ui_end(k->u);
+    k->count = goome_a11y_tree(k->u, k->n, 256);
+}
+
+static int ax_find(ax_t *k, int role, const char *label)
+{
+    for (int i = 0; i < k->count && i < 256; i++)
+        if (k->n[i].role == role && !strcmp(k->n[i].label, label)) return i;
+    return -1;
+}
+
+static void ax_send(ax_t *k, const char *verb, int i, const char *text)
+{
+    goome_event e;
+    memset(&e, 0, sizeof(e));
+    e.type = GOOME_CONTROL;
+    if (i < 0) return;
+    snprintf(e.msg, sizeof(e.msg), "a11y %s %u%s%s", verb, (unsigned)k->n[i].id, text ? " " : "", text ? text : "");
+    goome_push(k->g, &e);
+}
+
+static void a11y(void)
+{
+    int err;
+    ax_t k;
+    memset(&k, 0, sizeof(k));
+    k.vol = 2;
+    snprintf(k.name, sizeof(k.name), "Bo");
+    k.g = goome_open(&(goome_opts){.backend = GOOME_TEST, .mode = GOOME_MODE_WINDOW, .width = 420, .height = 700, .test_script = "end 100000"}, &err);
+    CHECK(k.g != NULL);
+    if (!k.g) return;
+    k.u = goome_ui_new(k.g);
+    goome_ui_theme(k.u)->font = NULL;
+    ax_frame(&k);
+    CHECK(k.count > 15);
+    int app = ax_find(&k, GOOME_ROLE_WINDOW, "Demo"), ok = ax_find(&k, GOOME_ROLE_BUTTON, "OK"), dark = ax_find(&k, GOOME_ROLE_CHECKBOX, "Dark");
+    int vol = ax_find(&k, GOOME_ROLE_SLIDER, "Volume"), name = ax_find(&k, GOOME_ROLE_INPUT, "Name"), fruit = ax_find(&k, GOOME_ROLE_COMBO, "Fruit");
+    int tree = ax_find(&k, GOOME_ROLE_TREE, "Folder"), knob = ax_find(&k, GOOME_ROLE_BUTTON, "Knob"), tab2 = ax_find(&k, GOOME_ROLE_TAB, "Two");
+    int big = ax_find(&k, GOOME_ROLE_RADIO, "Big"), notes = ax_find(&k, GOOME_ROLE_INPUT, "Notes");
+    CHECK(app == 0 && k.n[app].parent == -1);
+    CHECK(ok > 0 && k.n[ok].parent == app && k.n[ok].w > 0 && k.n[ok].h > 0);
+    CHECK(ax_find(&k, GOOME_ROLE_TEXT, "Hello there") > 0 && ax_find(&k, GOOME_ROLE_TEXT, "ready") > 0);
+    CHECK(ax_find(&k, GOOME_ROLE_BUTTON, "Close") > 0 && ax_find(&k, GOOME_ROLE_BUTTON, "Minimize") > 0);
+    CHECK(dark > 0 && !(k.n[dark].states & GOOME_A11Y_CHECKED));
+    CHECK(big > 0 && !(k.n[big].states & GOOME_A11Y_CHECKED));
+    CHECK(vol > 0 && k.n[vol].num == 2 && k.n[vol].min == 0 && k.n[vol].max == 10 && !strcmp(k.n[vol].value, "2.0"));
+    CHECK(name > 0 && !strcmp(k.n[name].value, "Bo"));
+    CHECK(fruit > 0 && !strcmp(k.n[fruit].value, "Mango") && !(k.n[fruit].states & GOOME_A11Y_EXPANDED));
+    CHECK(tab2 > 0 && k.n[k.n[tab2].parent].role == GOOME_ROLE_GROUP && !(k.n[tab2].states & GOOME_A11Y_SELECTED));
+    CHECK(ax_find(&k, GOOME_ROLE_TAB, "One") > 0 && (k.n[ax_find(&k, GOOME_ROLE_TAB, "One")].states & GOOME_A11Y_SELECTED));
+    CHECK(tree > 0 && !(k.n[tree].states & GOOME_A11Y_EXPANDED) && ax_find(&k, GOOME_ROLE_TEXT, "inside") < 0);
+    CHECK(knob > 0 && !strcmp(k.n[knob].value, "11"));
+    CHECK(notes > 0);
+    int pr = -1;
+    for (int i = 0; i < k.count; i++)
+        if (k.n[i].role == GOOME_ROLE_PROGRESS) pr = i;
+    CHECK(pr > 0 && k.n[pr].num == 0.25 && !strcmp(k.n[pr].value, "25%"));
+    uint32_t ids[256];
+    int before = k.count;
+    for (int i = 0; i < k.count; i++) ids[i] = k.n[i].id;
+    ax_frame(&k);
+    CHECK(k.count == before);
+    int same = 1;
+    for (int i = 0; i < k.count && i < before; i++) same &= ids[i] == k.n[i].id;
+    CHECK(same);
+    for (int i = 0; i < k.count; i++)
+        for (int j = 0; j < i; j++) same &= k.n[i].id != k.n[j].id;
+    CHECK(same);
+
+    ax_send(&k, "press", ok, NULL);
+    ax_send(&k, "press", dark, NULL);
+    ax_send(&k, "press", big, NULL);
+    ax_send(&k, "set", vol, "7.5");
+    ax_send(&k, "set", name, "hello there");
+    ax_send(&k, "press", knob, NULL);
+    ax_send(&k, "expand", tree, NULL);
+    ax_send(&k, "press", tab2, NULL);
+    ax_send(&k, "set", notes, "line one");
+    ax_frame(&k);
+    CHECK(k.ok == 1 && k.dark == 1 && k.mode == 1 && k.vol == 7.5 && !strcmp(k.name, "hello there") && k.custom_hits == 1 && k.open == 1 && k.tab == 1);
+    CHECK(!strcmp(k.note, "line one"));
+    ax_frame(&k);
+    dark = ax_find(&k, GOOME_ROLE_CHECKBOX, "Dark"), vol = ax_find(&k, GOOME_ROLE_SLIDER, "Volume"), name = ax_find(&k, GOOME_ROLE_INPUT, "Name");
+    tree = ax_find(&k, GOOME_ROLE_TREE, "Folder");
+    CHECK(dark > 0 && (k.n[dark].states & GOOME_A11Y_CHECKED));
+    CHECK(vol > 0 && !strcmp(k.n[vol].value, "7.5"));
+    CHECK(name > 0 && !strcmp(k.n[name].value, "hello there"));
+    CHECK(tree > 0 && (k.n[tree].states & GOOME_A11Y_EXPANDED));
+    int in = ax_find(&k, GOOME_ROLE_TEXT, "inside");
+    CHECK(in > 0 && k.n[in].parent == tree);
+    ax_send(&k, "expand", tree, NULL);
+    ax_send(&k, "set", vol, "99");
+    ax_frame(&k);
+    CHECK(k.open == 1 && k.vol == 10);
+
+    ax_send(&k, "focus", name, NULL);
+    ax_frame(&k);
+    ax_frame(&k);
+    name = ax_find(&k, GOOME_ROLE_INPUT, "Name");
+    CHECK(name > 0 && (k.n[name].states & GOOME_A11Y_FOCUSED) && k.n[name].caret == 11);
+    int focused = 0;
+    for (int i = 0; i < k.count; i++) focused += (k.n[i].states & GOOME_A11Y_FOCUSED) != 0;
+    CHECK(focused == 1);
+
+    fruit = ax_find(&k, GOOME_ROLE_COMBO, "Fruit");
+    ax_send(&k, "expand", fruit, NULL);
+    ax_frame(&k);
+    ax_frame(&k);
+    fruit = ax_find(&k, GOOME_ROLE_COMBO, "Fruit");
+    int fig = ax_find(&k, GOOME_ROLE_ITEM, "Fig");
+    CHECK(fruit > 0 && (k.n[fruit].states & GOOME_A11Y_EXPANDED) && fig > 0);
+    CHECK(fig > 0 && k.n[k.n[fig].parent].role == GOOME_ROLE_LIST && k.n[k.n[fig].parent].parent == fruit);
+    ax_send(&k, "press", fig, NULL);
+    ax_frame(&k);
+    ax_frame(&k);
+    CHECK(k.fruit == 2 && ax_find(&k, GOOME_ROLE_ITEM, "Fig") < 0);
+    fruit = ax_find(&k, GOOME_ROLE_COMBO, "Fruit");
+    CHECK(fruit > 0 && !strcmp(k.n[fruit].value, "Fig"));
+    ax_send(&k, "set", fruit, "Kiwi");
+    ax_frame(&k);
+    CHECK(k.fruit == 1);
+
+    goome_ui_a11y(k.u, 0);
+    ax_frame(&k);
+    CHECK(k.count == 0);
+    goome_ui_free(k.u);
+    goome_close(k.g);
+
+    goome *g = goome_open(&(goome_opts){.backend = GOOME_OFFSCREEN, .mode = GOOME_MODE_OFFSCREEN, .width = 200, .height = 100}, &err);
+    CHECK(g != NULL);
+    if (!g) return;
+    goome_ui *u = goome_ui_new(g);
+    goome_ui_theme(u)->font = NULL;
+    goome_a11y_node n[8];
+    for (int pass = 0; pass < 2; pass++) {
+        if (goome_ui_begin(u, 0)) goome_ui_button(u, "Hi"), goome_ui_end(u);
+        CHECK(goome_a11y_tree(u, n, 8) == pass);
+        goome_ui_a11y(u, 1);
+    }
+    if (goome_ui_begin(u, 0)) goome_ui_button(u, "Hi"), goome_ui_end(u);
+    CHECK(goome_a11y_tree(u, n, 8) == 1 && n[0].role == GOOME_ROLE_BUTTON && !strcmp(n[0].label, "Hi"));
+    goome_ui_free(u);
+    goome_close(g);
+}
+
 int main(void)
 {
     gm_dump_dir = getenv("GOOME_UNIT_DUMP");
@@ -2823,6 +3007,7 @@ int main(void)
     emoji_rtl();
     bidi_caret();
     ime();
+    a11y();
     printf(fails ? "%d failed\n" : "all good\n", fails);
     return fails != 0;
 }

@@ -13,7 +13,7 @@ res="$("$clang" -print-resource-dir)"
 flags=(--target=wasm32 -nostdlib -nostdlibinc -isystem libc/include -isystem "$res/include" -std=c99 -Os -ffunction-sections -fdata-sections
   -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -Wno-unused-function ${WERROR:+-Werror} -I../include -I../src -I.)
 objs=()
-for f in ../src/goome.c ../src/draw.c ../src/image.c ../src/font.c ../src/ui.c ../src/test.c ../src/offscreen.c libc/libc.c gw.c; do
+for f in ../src/goome.c ../src/draw.c ../src/image.c ../src/font.c ../src/ui.c ../src/a11y.c ../src/test.c ../src/offscreen.c libc/libc.c gw.c; do
   o="$out/obj/$(basename "${f%.c}").o"
   "$clang" "${flags[@]}" -c "$f" -o "$o"
   objs+=("$o")
