@@ -133,6 +133,8 @@ screen 1920x1080 2
 end 14
 ```
 
+`text <utf8>` sends a `GOOME_TEXT` like an IME finished something, `preedit <utf8> <caret>` sends a `GOOME_PREEDIT` (caret is a byte offset, leave it off for the end, a bare `preedit` clears it) and `ime` queues a `GOOME_CONTROL` saying `ime 1 x,y wxh` so a script can see if the ui turned the IME on and where it put the candidate window. Same as keys, they only come in while the keyboard is on.
+
 `grabbed` queues a `GOOME_CONTROL` event saying `grabbed 0` or `grabbed 1`, so a script can see what `goome_grab` did. While grabbed, clicks and moves land everywhere, not just on hits, like a real pointer grab.
 
 In window mode it fakes a window instead: `screen` is ignored, the canvas is `opts.width x opts.height`, and the script gets `resize WxH`, `close`, `focus 0/1` and `drop x,y path`. Keys only come in while its "focused" and clicks only land inside the window.
@@ -146,6 +148,20 @@ For game engines and headless rendering. Theres no window, no dlopen, no threads
 ### Hotkeys on wayland: the control fifo
 
 Wayland apps cant grab keys system wide, and XWayland grabs only see X windows. So if you give goome a `state_dir` it makes a fifo at `state_dir/control` and `goome_poll` turns each line written to it into a `GOOME_CONTROL` event. Your app tells the user to bind something like `bindsym alt+h exec myapp --send hide`, and `--send` calls `goome_send(state_dir, "hide")`. `goome_control_path` gives you the path to show them. It works on X11 too, it just isnt needed there.
+
+### Typing with an IME
+
+`goome_text_input(g, on, caret)` is the one switch. The backends push `GOOME_PREEDIT` when the text being composed changes and `GOOME_TEXT` when something got picked. Both can be longer than an event holds, so `gm_ime_push` keeps the whole string in a small fifo next to the queue, the event gets the first 63 bytes in `msg` (cut on a utf-8 boundary like drops are), and `goome_poll` moves the full string into `goome_event_text` when that event comes out. The fifo only ever gets a string when the event actually made it into the queue, so they cant get out of step. `goome_push` with one of the two types goes through the same spot, so offscreen engines and bindings just push them.
+
+Plain keys stay `GOOME_KEY` with their text like always. `GOOME_TEXT` is only for stuff an IME, a dead key or compose made, otherwise every app that reads keys would get every letter twice.
+
+**X11** opens XIM from the libX11 we already dlopen. XIM wants a real locale, and a C program sits in "C" until it calls setlocale, so goome sets LC_CTYPE from the environment (or C.UTF-8) just long enough to open the IM and puts the old one back. XMODIFIERS picks the IM, and if theres none it falls back to `@im=none`, which is libX11s own compose and dead keys. Styles go on-the-spot (preedit callbacks, we draw it) then over-the-spot then root. Every event goes through XFilterEvent first. The candidate window follows XNSpotLocation, set to the bottom left of the caret. Key presses go through Xutf8LookupString, and if what came out isnt what that key would type on its own (or its keycode 0, which is how IMs send a commit) its a `GOOME_TEXT`, otherwise the key goes down the old path. That one check covers compose, dead keys and ibus sending normal keys back to us. IBus straight over dbus got left out, ibus and fcitx both run an XIM server anyway. Tested on Xvfb with `@im=none` and with a private ibus-daemon (its own dbus and config folder so it never touches the real desktop one).
+
+**Wayland** binds zwp_text_input_manager_v3 when the compositor has it and makes the text input on the first `goome_text_input`. It only enables after the `enter` for our surface, since enabling before that does nothing. preedit and commit get buffered until `done` like the protocol says, then its TEXT first and PREEDIT after. The cursor rectangle is in surface coords, so the window mode title bar (when goome draws it) and the overlay output origin get taken off. delete_surrounding_text is ignored, we never send surrounding text.
+
+**Windows** loads imm32.dll. On WM_IME_SETCONTEXT it hides the IMEs own composition window, WM_IME_STARTCOMPOSITION and WM_IME_COMPOSITION never reach DefWindowProc (or windows would also send the result as WM_CHARs) and the strings come from ImmGetCompositionStringW, the caret from GCS_CURSORPOS turned into a utf-8 byte offset. ImmSetCompositionWindow and ImmSetCandidateWindow (CFS_EXCLUDE, so it never covers the line) put the popup at the caret. Turning it off cancels whatever was being composed but leaves the default IME alone, so apps that never call `goome_text_input` type exactly like before. Wine runs it through its own IME in tests/win32.sh.
+
+**macOS** adds the NSTextInputClient methods to the window mode view class and the protocol on top, so the view gets an input context. While its on, keyDown goes through `[inputContext handleEvent:]`. If that ends in insertText with exactly what the key types and nothing was marked, its a normal key again. firstRectForCharacterRange hands back the caret in screen coords for the candidate window. Overlay mode on Mac doesnt do it.
 
 ## Weird stuff we work around
 
@@ -277,6 +293,8 @@ Every number the kit used to have baked in (checkbox size, scrollbar width, focu
 The simple path is just data on top. `goome_ui_theme_make` starts from dark or light, tints the greys a little towards the accent, picks dark or white accent text by how bright the accent is and fits the checkbox and tooltip radius to the radius you gave it (at 10 that gives the old 5 and 8). The presets are the ui builder ones, copied over value by value, so a project made in the builder looks the same in C. The unit test renders all of them and checks one hash.
 
 Behavior that isnt a look lives in `goome_ui_config`, one per ui and not pushed, since a tooltip delay or a key map changing halfway through a frame doesnt mean anything. Keys go through `ui_act`, which looks the key and mods up in the map. A binding matches when all its mods are held and the only extra one is shift, shift is what turns a move into a select. When two bindings match the one with more mods wins, so ctrl+shift+z is redo and not undo with shift. Plain keys without a binding (arrows, home, backspace) still do their normal thing.
+
+The IME in the ui is kept out of the widget code as much as it can be. A `GOOME_TEXT` goes into the key list as a fake key (`UI_IME_KEY`, nothing else ever matches it) with the text in a side buffer, so it stays in order with real keys. The input and the text edit insert it like a paste: it replaces the selection, gets its own undo step, newlines turn into spaces in a one line input and number inputs drop what isnt a number. While a widget has focus it calls `ui_ime_show` with where its caret sits, and `goome_ui_end` only calls `goome_text_input` when that spot moved or focus changed, so its not spamming the os every frame. The preedit gets drawn as a little box on top of the text at the caret, underlined, with the IMEs caret in it. That covers whatever is to the right of the caret while you compose instead of pushing it over, which is the simple way and keeps the hashes of every input that isnt composing the same. Password and read only fields dont turn it on.
 
 `goome_ui_input_ex` is the old input with flags, `goome_ui_input` just calls it with none, so its pixels didnt change. Password mode never draws the real text: it builds the mask string each frame and every x position (caret, selection, clicks) gets measured on the mask, worked out from how many letters come before that byte. Word jumps and double clicks treat the whole password as one word so they dont leak where the spaces are, and copy and cut do nothing.
 

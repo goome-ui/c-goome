@@ -586,6 +586,14 @@ Menus nest and show shortcuts and check marks, and right click menus work on any
 Tab and shift+tab move focus, and text boxes do selection, undo and ctrl+c/x/v with the real clipboard.
 </p>
 
+<h3 align="center">Japanese, Chinese, Korean and dead keys</h3>
+
+<p align="center">
+Inputs and text edits turn the input method on while they have focus and off again when they lose it. The candidate window pops up right at the caret, the text you're still composing gets drawn underlined where youre typing (with the IME's own caret in it), and when you pick something it goes in like typing. It replaces the selection and ctrl+z takes it back out. Dead keys and compose (´ then e, or compose o c) come in the same way.<br> <br>
+Without the ui kit you do it yourself. <code>goome_text_input(g, 1, &caret)</code> turns it on and says where the caret is, <code>GOOME_PREEDIT</code> means the composing text changed and <code>GOOME_TEXT</code> is the finished text. <code>goome_event_text</code> has all of it (the event only holds 63 bytes) and <code>goome_preedit_cursor</code> is where the IME's caret sits in it. Plain keys still come as <code>GOOME_KEY</code> like before.<br> <br>
+X11 talks XIM (ibus and fcitx both have it, and with no IM running you still get dead keys and compose), Wayland uses text-input-v3, Windows IMM32 and Mac the normal NSTextInputClient. Offscreen engines just push the two events.
+</p>
+
 <h3 align="center">Custom everything</h3>
 
 <p align="center">
