@@ -1930,6 +1930,10 @@ static const gm_ov mac_wov = {"macos", mac_wopen, mac_wcanvas, mac_wcommit, mac_
                               mac_wwin, mac_wcursor, mac_clip_set, mac_clip_get, mac_whold};
 static const gm_ov *mac_wtable(void) { return &mac_wov; }
 
+#ifndef GOOME_NO_UI
+void *gm_mac_view(goome *g) { return g && g->ov == &mac_wov && g->ov_priv ? ((mac_win *)g->ov_priv)->view : NULL; }
+#endif
+
 #undef MAC_B
 #undef MAC_RECT_ENC
 #undef MAC_BLK_GLOBAL
