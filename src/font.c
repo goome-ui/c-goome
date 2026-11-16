@@ -4,12 +4,17 @@
 #include <string.h>
 
 #include "internal.h"
+#include "unidata.h"
 
 #if defined(_WIN32)
 #include <io.h>
 #include <wchar.h>
 #elif defined(__unix__) || defined(__APPLE__)
 #include <dirent.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #if !defined(__APPLE__)
 #include <dlfcn.h>
 #endif
@@ -29,6 +34,11 @@
 #define FT_ARENA (4u << 20)
 #define FT_SLOTS 8192
 #define FT_KC 2048
+#define FT_MAXMAP (1u << 30)
+#define FT_NFB 8
+#define FT_CC 512
+#define FT_NLIG 256
+#define FT_REG 16
 
 typedef struct {
     int32_t x, y;
@@ -44,6 +54,18 @@ typedef struct {
 typedef struct {
     uint32_t start, count, osz, data;
 } ft_idx;
+
+typedef struct {
+    uint32_t g, px64, argb;
+    int16_t w, h, l, t;
+    uint32_t *px;
+} ft_cent;
+
+typedef struct {
+    int g, lo, hi;
+    int64_t adv;
+    uint8_t fi, rtl, kind;
+} ft_gl;
 
 struct goome_font {
     const uint8_t *d;
@@ -82,6 +104,23 @@ struct goome_font {
     int rw, rh;
     uint32_t col;
     uint32_t tab[256];
+    void *map;
+    size_t maplen;
+    int shared, color;
+    goome_font *fb[FT_NFB];
+    int nfb;
+    uint32_t colr, cpal, cblc, cbdt, sbix, uvs;
+    uint32_t lig[FT_NLIG];
+    int nlig;
+    ft_cent *cc;
+    int ncc;
+    size_t ccb;
+    uint32_t *scp, *ssh;
+    int *soff, *scs, *sord;
+    uint8_t *scl, *swk, *slv;
+    int scap;
+    ft_gl *sgl;
+    int sglcap;
 };
 
 static uint8_t ft_gamma[256];
@@ -137,6 +176,7 @@ static int ft_cmap_find(goome_font *f, uint32_t cmap)
     for (uint32_t i = 0; i < nt && i < 512; i++) {
         uint32_t r = cmap + 4 + i * 8, o = cmap + ft_u32(f, r + 4);
         int s = ft_cmap_score((int)ft_u16(f, r), (int)ft_u16(f, r + 2), (int)ft_u16(f, o));
+        if (ft_u16(f, r) == 0 && ft_u16(f, r + 2) == 5 && ft_u16(f, o) == 14) f->uvs = o;
         if (s > best) best = s, f->cmoff = o, f->cmfmt = (int)ft_u16(f, o), f->sym = s == 2;
     }
     return best;
@@ -1124,9 +1164,44 @@ static int ft_kern(goome_font *f, int a, int b)
     return v;
 }
 
+static int ft_tag_is(uint32_t t, const char *const *tags)
+{
+    for (; *tags; tags++)
+        if (t == ((uint32_t)(unsigned char)(*tags)[0] << 24 | (uint32_t)(unsigned char)(*tags)[1] << 16 | (uint32_t)(unsigned char)(*tags)[2] << 8 | (uint32_t)(unsigned char)(*tags)[3])) return 1;
+    return 0;
+}
+
+static void ft_gsub_init(goome_font *f, uint32_t g)
+{
+    static const char *const tags[] = {"ccmp", "liga", "rlig", "clig", NULL};
+    if (!g || !ft_has(f, g, 10)) return;
+    uint32_t fl = g + ft_u16(f, g + 6), ll = g + ft_u16(f, g + 8), nf = ft_u16(f, fl), nl = ft_u16(f, ll);
+    uint8_t *use = calloc(nl + 1, 1);
+    if (!use) return;
+    for (uint32_t i = 0; i < nf; i++) {
+        uint32_t r = fl + 2 + i * 6;
+        if (!ft_tag_is(ft_u32(f, r), tags)) continue;
+        uint32_t ft = fl + ft_u16(f, r + 4), n = ft_u16(f, ft + 2);
+        for (uint32_t k = 0; k < n; k++) {
+            uint32_t li = ft_u16(f, ft + 4 + k * 2);
+            if (li < nl) use[li] = 1;
+        }
+    }
+    for (uint32_t i = 0; i < nl && f->nlig < FT_NLIG; i++) {
+        if (!use[i]) continue;
+        uint32_t lk = ll + ft_u16(f, ll + 2 + i * 2), type = ft_u16(f, lk), ns = ft_u16(f, lk + 4);
+        for (uint32_t k = 0; k < ns && f->nlig < FT_NLIG; k++) {
+            uint32_t st = lk + ft_u16(f, lk + 6 + k * 2), ty = type;
+            if (ty == 7 && ft_u16(f, st) == 1) ty = ft_u16(f, st + 2), st += ft_u32(f, st + 4);
+            if (ty == 4 && ft_u16(f, st) == 1 && ft_has(f, st, 6)) f->lig[f->nlig++] = st;
+        }
+    }
+    free(use);
+}
+
 static int ft_parse(goome_font *f, int index)
 {
-    if (f->n < 12 || f->n > FT_MAXFILE) return 0;
+    if (f->n < 12 || f->n > (f->map ? FT_MAXMAP : FT_MAXFILE)) return 0;
     uint32_t dir = 0, tag = ft_u32(f, 0);
     if (tag == 0x74746366u) {
         uint32_t nf = ft_u32(f, 8);
@@ -1150,8 +1225,9 @@ static int ft_parse(goome_font *f, int index)
     f->loca = ft_table(f, dir, "loca", &f->loca_n);
     if (!f->glyf || !f->loca) {
         cff = ft_table(f, dir, "CFF ", &cfflen);
-        if (!cff || !ft_cff_init(f, cff, cfflen)) return 0;
-        f->cff = 1;
+        if (cff && ft_cff_init(f, cff, cfflen)) f->cff = 1;
+        else if (!ft_table(f, dir, "CBDT", NULL) && !ft_table(f, dir, "sbix", NULL)) return 0;
+        else f->glyf = f->loca = f->glyf_n = f->loca_n = 0;
     }
     if (!ft_cmap_find(f, cmap)) return 0;
     for (int i = 0; i < 256; i++) {
@@ -1183,17 +1259,25 @@ static int ft_parse(goome_font *f, int index)
     f->kern = ft_table(f, dir, "kern", NULL);
     f->gpos = ft_table(f, dir, "GPOS", NULL);
     ft_kern_init(f);
+    ft_gsub_init(f, ft_table(f, dir, "GSUB", NULL));
+    f->colr = ft_table(f, dir, "COLR", NULL), f->cpal = ft_table(f, dir, "CPAL", NULL);
+    f->cblc = ft_table(f, dir, "CBLC", NULL), f->cbdt = ft_table(f, dir, "CBDT", NULL);
+    f->sbix = ft_table(f, dir, "sbix", NULL);
+    if (!f->colr || !f->cpal || !ft_has(f, f->colr, 14) || !ft_has(f, f->cpal, 14)) f->colr = 0;
+    if (!f->cblc || !f->cbdt || !ft_has(f, f->cblc, 8)) f->cblc = 0;
+    if (!f->sbix || !ft_has(f, f->sbix, 8)) f->sbix = 0;
+    f->color = f->colr || f->cblc || f->sbix;
     return 1;
 }
 
-static goome_font *ft_new(const uint8_t *d, size_t n, uint8_t *own, int index)
+static goome_font *ft_new(const uint8_t *d, size_t n, uint8_t *own, int index, void *map)
 {
     goome_font *f = calloc(1, sizeof(*f));
     if (!f) {
         free(own);
         return NULL;
     }
-    f->d = d, f->n = n, f->own = own;
+    f->d = d, f->n = n, f->own = own, f->map = map, f->maplen = map ? n : 0;
     if (!ft_parse(f, index)) {
         goome_font_free(f);
         return NULL;
@@ -1256,7 +1340,7 @@ goome_font *goome_font_load_index(const char *path, int index)
         free(d);
         return NULL;
     }
-    return ft_new(d, n, d, index);
+    return ft_new(d, n, d, index, NULL);
 }
 
 goome_font *goome_font_load(const char *path) { return goome_font_load_index(path, 0); }
@@ -1264,19 +1348,83 @@ goome_font *goome_font_load(const char *path) { return goome_font_load_index(pat
 goome_font *goome_font_load_mem(const void *data, size_t n, int copy)
 {
     if (!data || n < 12 || n > FT_MAXFILE) return NULL;
-    if (!copy) return ft_new(data, n, NULL, 0);
+    if (!copy) return ft_new(data, n, NULL, 0, NULL);
     uint8_t *d = malloc(n);
     if (!d) return NULL;
     memcpy(d, data, n);
-    return ft_new(d, n, d, 0);
+    return ft_new(d, n, d, 0, NULL);
+}
+
+static void ft_cc_clear(goome_font *f)
+{
+    for (int i = 0; f->cc && i < FT_CC; i++) free(f->cc[i].px), f->cc[i].px = NULL, f->cc[i].px64 = 0;
+    f->ncc = 0, f->ccb = 0;
 }
 
 void goome_font_free(goome_font *f)
 {
-    if (!f) return;
+    if (!f || f->shared) return;
+    ft_cc_clear(f);
+    free(f->cc);
+#if !defined(_WIN32) && (defined(__unix__) || defined(__APPLE__))
+    if (f->map) munmap(f->map, f->maplen);
+#endif
     free(f->own), free(f->ksub), free(f->ents), free(f->slots), free(f->arena);
     free(f->pts), free(f->ends), free(f->cover), free(f->area), free(f->tmp);
+    free(f->scp), free(f->ssh), free(f->soff), free(f->scs), free(f->sord), free(f->scl), free(f->swk), free(f->slv), free(f->sgl);
     free(f);
+}
+
+static goome_font *ft_map_load(const char *path, int index)
+{
+#if !defined(_WIN32) && (defined(__unix__) || defined(__APPLE__))
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return NULL;
+    struct stat st;
+    if (fstat(fd, &st) || st.st_size < 12 || (uint64_t)st.st_size > FT_MAXMAP) {
+        close(fd);
+        return NULL;
+    }
+    size_t n = (size_t)st.st_size;
+    void *m = mmap(NULL, n, PROT_READ, MAP_PRIVATE, fd, 0);
+    close(fd);
+    if (m == MAP_FAILED) return NULL;
+    goome_font *f = ft_new(m, n, NULL, index, m);
+    if (!f) munmap(m, n);
+    return f;
+#else
+    return goome_font_load_index(path, index);
+#endif
+}
+
+static struct {
+    char path[512];
+    int index;
+    goome_font *f;
+} ft_reg[FT_REG];
+static int ft_nreg;
+
+static goome_font *ft_shared(const char *path, int index)
+{
+    if (!path || strlen(path) >= sizeof(ft_reg[0].path)) return NULL;
+    for (int i = 0; i < ft_nreg; i++)
+        if (ft_reg[i].index == index && !strcmp(ft_reg[i].path, path)) return ft_reg[i].f;
+    if (ft_nreg >= FT_REG) return NULL;
+    goome_font *f = ft_map_load(path, index);
+    if (!f && index) f = ft_map_load(path, 0);
+    strcpy(ft_reg[ft_nreg].path, path);
+    ft_reg[ft_nreg].index = index, ft_reg[ft_nreg].f = f;
+    ft_nreg++;
+    if (f) f->shared = 1;
+    return f;
+}
+
+void goome_font_fallback(goome_font *f, goome_font *fallback)
+{
+    if (!f || !fallback || f == fallback || f->nfb >= FT_NFB) return;
+    for (int i = 0; i < f->nfb; i++)
+        if (f->fb[i] == fallback) return;
+    f->fb[f->nfb++] = fallback;
 }
 
 static int ft_norm(const char *s, char *out, int max)
@@ -1413,7 +1561,7 @@ static goome_font *ft_hunt_for(const char *want)
 }
 
 #if defined(__unix__) && !defined(__APPLE__)
-static goome_font *ft_fontconfig(const char *name)
+static int ft_fc_file(const char *name, char *out, size_t cap, int *index)
 {
     static void *lib;
     static void *cfg;
@@ -1428,7 +1576,7 @@ static goome_font *ft_fontconfig(const char *name)
     if (!tried) {
         tried = 1;
         lib = dlopen("libfontconfig.so.1", RTLD_NOW | RTLD_LOCAL);
-        if (!lib) return NULL;
+        if (!lib) return 0;
         void *(*init)(void) = NULL;
         *(void **)&init = dlsym(lib, "FcInitLoadConfigAndFonts");
         *(void **)&parse = dlsym(lib, "FcNameParse");
@@ -1440,28 +1588,91 @@ static goome_font *ft_fontconfig(const char *name)
         *(void **)&destroy = dlsym(lib, "FcPatternDestroy");
         if (init && parse && subst && defs && match && gets && geti && destroy) cfg = init();
     }
-    if (!cfg) return NULL;
+    if (!cfg) return 0;
     void *pat = parse((const unsigned char *)name);
-    if (!pat) return NULL;
+    if (!pat) return 0;
     subst(cfg, pat, 0);
     defs(pat);
-    int res = 0, idx = 0;
+    int res = 0, idx = 0, ok = 0;
     void *m = match(cfg, pat, &res);
     destroy(pat);
-    if (!m) return NULL;
+    if (!m) return 0;
     unsigned char *file = NULL;
-    goome_font *f = NULL;
-    if (gets(m, "file", 0, &file) == 0 && file) {
+    if (gets(m, "file", 0, &file) == 0 && file && strlen((const char *)file) < cap) {
         if (geti(m, "index", 0, &idx) != 0) idx = 0;
-        f = goome_font_load_index((const char *)file, idx & 0xFFFF);
-        if (!f && idx) f = goome_font_load((const char *)file);
+        strcpy(out, (const char *)file);
+        *index = idx & 0xFFFF, ok = 1;
     }
     destroy(m);
+    return ok;
+}
+
+static goome_font *ft_fontconfig(const char *name)
+{
+    char path[1024];
+    int idx = 0;
+    if (!ft_fc_file(name, path, sizeof(path), &idx)) return NULL;
+    goome_font *f = goome_font_load_index(path, idx);
+    if (!f && idx) f = goome_font_load(path);
     return f;
 }
 #endif
 
-goome_font *goome_font_system(const char *name)
+static goome_font *ft_find_shared(const char *const *fc, const char *const *paths, uint32_t cp, int color)
+{
+    goome_font *f;
+#if defined(__unix__) && !defined(__APPLE__)
+    for (int i = 0; fc && fc[i]; i++) {
+        char path[1024];
+        int idx = 0;
+        if (!ft_fc_file(fc[i], path, sizeof(path), &idx)) continue;
+        f = ft_shared(path, idx);
+        if (f && ft_cmap(f, cp) && (!color || f->color)) return f;
+    }
+#else
+    (void)fc;
+#endif
+    for (int i = 0; paths && paths[i]; i++) {
+        char path[600];
+#if defined(_WIN32)
+        const char *win = getenv("WINDIR");
+        snprintf(path, sizeof(path), "%s\\Fonts\\%s", win ? win : "C:\\Windows", paths[i]);
+#else
+        snprintf(path, sizeof(path), "%s", paths[i]);
+#endif
+        f = ft_shared(path, 0);
+        if (f && ft_cmap(f, cp) && (!color || f->color)) return f;
+    }
+    return NULL;
+}
+
+static goome_font *ft_auto(goome_font *f)
+{
+#if defined(_WIN32)
+    static const char *const emo[] = {"seguiemj.ttf", NULL}, *const ar[] = {"segoeui.ttf", "arial.ttf", "tahoma.ttf", NULL}, *const he[] = {"segoeui.ttf", "arial.ttf", NULL};
+#elif defined(__APPLE__)
+    static const char *const emo[] = {"/System/Library/Fonts/Apple Color Emoji.ttc", NULL};
+    static const char *const ar[] = {"/System/Library/Fonts/GeezaPro.ttc", "/System/Library/Fonts/Supplemental/GeezaPro.ttc", "/System/Library/Fonts/Supplemental/Arial Unicode.ttf", NULL};
+    static const char *const he[] = {"/System/Library/Fonts/ArialHB.ttc", "/System/Library/Fonts/Supplemental/Arial Unicode.ttf", NULL};
+#else
+    static const char *const emo[] = {"/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf", "/usr/share/fonts/noto/NotoColorEmoji.ttf", "/usr/share/fonts/google-noto-emoji/NotoColorEmoji.ttf",
+                                      "/usr/share/fonts/noto-emoji/NotoColorEmoji.ttf", "/usr/share/fonts/TTF/NotoColorEmoji.ttf", NULL};
+    static const char *const ar[] = {"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/TTF/DejaVuSans.ttf", NULL}, *const he[] = {"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/TTF/DejaVuSans.ttf", NULL};
+#endif
+    static const char *const fc_emo[] = {"emoji", "Noto Color Emoji", NULL}, *const fc_ar[] = {":lang=ar", NULL}, *const fc_he[] = {":lang=he", NULL};
+    if (!f) return NULL;
+    goome_font *e;
+    if (!f->color && (e = ft_find_shared(fc_emo, emo, 0x1F600, 1))) goome_font_fallback(f, e);
+    if (!ft_cmap(f, 0x627) && (e = ft_find_shared(fc_ar, ar, 0x627, 0))) goome_font_fallback(f, e);
+    if (!ft_cmap(f, 0x5D0) && (e = ft_find_shared(fc_he, he, 0x5D0, 0))) goome_font_fallback(f, e);
+    return f;
+}
+
+static goome_font *ft_system(const char *name);
+
+goome_font *goome_font_system(const char *name) { return ft_auto(ft_system(name)); }
+
+static goome_font *ft_system(const char *name)
 {
     goome_font *f = NULL;
     if (name && (strchr(name, '/') || strchr(name, '\\'))) return goome_font_load(name);
@@ -1490,35 +1701,6 @@ goome_font *goome_font_system(const char *name)
     for (int i = 0; names[i]; i++)
         if ((f = ft_hunt_for(names[i]))) return f;
     return NULL;
-}
-
-static uint32_t ft_utf8(const char **ps)
-{
-    const unsigned char *s = (const unsigned char *)*ps;
-    uint32_t c = s[0];
-    int n = 0;
-    uint32_t min = 0;
-    if (c < 0x80) {
-        *ps += 1;
-        return c;
-    }
-    if (c >= 0xC2 && c <= 0xDF) n = 1, c &= 31, min = 0x80;
-    else if (c >= 0xE0 && c <= 0xEF) n = 2, c &= 15, min = 0x800;
-    else if (c >= 0xF0 && c <= 0xF4) n = 3, c &= 7, min = 0x10000;
-    else {
-        *ps += 1;
-        return 0xFFFD;
-    }
-    for (int i = 1; i <= n; i++) {
-        if ((s[i] & 0xC0) != 0x80) {
-            *ps += i;
-            return 0xFFFD;
-        }
-        c = c << 6 | (s[i] & 63);
-    }
-    *ps += n + 1;
-    if (c < min || c > 0x10FFFF || (c >= 0xD800 && c <= 0xDFFF)) return 0xFFFD;
-    return c;
 }
 
 static inline void ft_mark(goome_canvas *c, int x0, int y0, int x1, int y1)
@@ -1564,8 +1746,948 @@ static void ft_blit(goome_canvas *c, goome_font *f, const uint8_t *bits, int w, 
     }
 }
 
+
 static double ft_round(double v) { return (double)(int64_t)(v < 0 ? v - 0.5 : v + 0.5); }
 static int ft_okd(double v) { return v == v && v < 1e9 && v > -1e9; }
+
+static void ft_cblit(goome_canvas *c, const uint32_t *px, int w, int h, int x, int y, const int *k, uint32_t a)
+{
+    int x0 = x > k[0] ? x : k[0], y0 = y > k[1] ? y : k[1], x1 = x + w < k[2] ? x + w : k[2], y1 = y + h < k[3] ? y + h : k[3];
+    if (x1 <= x0 || y1 <= y0) return;
+    ft_mark(c, x0, y0, x1, y1);
+    for (int yy = y0; yy < y1; yy++) {
+        const uint32_t *s = px + (size_t)(yy - y) * w + (x0 - x);
+        uint32_t *d = c->px + (size_t)yy * c->stride + x0;
+        for (int xx = x0; xx < x1; xx++, s++, d++) {
+            uint32_t src = *s;
+            if (!src) continue;
+            if (a < 255) {
+                uint32_t rb = (src & 0xFF00FF) * a + 0x800080, ag = (src >> 8 & 0xFF00FF) * a + 0x800080;
+                src = ((rb + (rb >> 8 & 0xFF00FF)) >> 8 & 0xFF00FF) | ((ag + (ag >> 8 & 0xFF00FF)) & 0xFF00FF00);
+            }
+            uint32_t v = *d, inv = 255 - (src >> 24);
+            uint32_t rb = (v & 0xFF00FF) * inv + 0x800080, ag = (v >> 8 & 0xFF00FF) * inv + 0x800080;
+            rb = (rb + (rb >> 8 & 0xFF00FF)) >> 8 & 0xFF00FF;
+            ag = (ag + (ag >> 8 & 0xFF00FF)) & 0xFF00FF00;
+            *d = src + rb + ag;
+        }
+    }
+}
+
+static void ft_scale(const uint32_t *s, int sw, int sh, int ss, uint32_t *d, int dw, int dh)
+{
+    if (dw <= sw && dh <= sh) {
+        for (int y = 0; y < dh; y++) {
+            int64_t ya = (int64_t)y * sh * 256 / dh, yb = (int64_t)(y + 1) * sh * 256 / dh;
+            for (int x = 0; x < dw; x++) {
+                int64_t xa = (int64_t)x * sw * 256 / dw, xb = (int64_t)(x + 1) * sw * 256 / dw;
+                uint64_t acc[4] = {0, 0, 0, 0}, ws = 0;
+                for (int64_t sy = ya >> 8; sy * 256 < yb && sy < sh; sy++) {
+                    int64_t wy = (yb < (sy + 1) * 256 ? yb : (sy + 1) * 256) - (ya > sy * 256 ? ya : sy * 256);
+                    for (int64_t sx = xa >> 8; sx * 256 < xb && sx < sw; sx++) {
+                        int64_t wx = (xb < (sx + 1) * 256 ? xb : (sx + 1) * 256) - (xa > sx * 256 ? xa : sx * 256);
+                        uint64_t wt = (uint64_t)(wx * wy);
+                        uint32_t p = s[(size_t)sy * ss + (size_t)sx];
+                        for (int q = 0; q < 4; q++) acc[q] += (uint64_t)(p >> (q * 8) & 255) * wt;
+                        ws += wt;
+                    }
+                }
+                uint32_t o = 0;
+                for (int q = 0; q < 4 && ws; q++) o |= (uint32_t)((acc[q] + ws / 2) / ws) << (q * 8);
+                d[(size_t)y * dw + x] = o;
+            }
+        }
+        return;
+    }
+    for (int y = 0; y < dh; y++) {
+        int64_t v = ((int64_t)(2 * y + 1) * sh * 65536 / (2 * dh)) - 32768;
+        if (v < 0) v = 0;
+        if (v > (int64_t)(sh - 1) << 16) v = (int64_t)(sh - 1) << 16;
+        int y0 = (int)(v >> 16), y1 = y0 + 1 < sh ? y0 + 1 : y0;
+        uint32_t fy = (uint32_t)(v >> 8 & 255);
+        for (int x = 0; x < dw; x++) {
+            int64_t h = ((int64_t)(2 * x + 1) * sw * 65536 / (2 * dw)) - 32768;
+            if (h < 0) h = 0;
+            if (h > (int64_t)(sw - 1) << 16) h = (int64_t)(sw - 1) << 16;
+            int x0 = (int)(h >> 16), x1 = x0 + 1 < sw ? x0 + 1 : x0;
+            uint32_t fx = (uint32_t)(h >> 8 & 255);
+            uint32_t a = s[(size_t)y0 * ss + x0], b = s[(size_t)y0 * ss + x1], c = s[(size_t)y1 * ss + x0], e = s[(size_t)y1 * ss + x1], o = 0;
+            for (int q = 0; q < 32; q += 8) {
+                uint32_t t = ((a >> q & 255) * (256 - fx) + (b >> q & 255) * fx) * (256 - fy) + ((c >> q & 255) * (256 - fx) + (e >> q & 255) * fx) * fy;
+                o |= ((t + 32768) >> 16) << q;
+            }
+            d[(size_t)y * dw + x] = o;
+        }
+    }
+}
+
+static int ft_png_ok(const goome_font *f, uint32_t at, uint32_t len)
+{
+    if (len < 33 || !ft_has(f, at, len) || memcmp(f->d + at, "\x89PNG\r\n\x1a\n", 8)) return 0;
+    uint32_t w = ft_u32(f, at + 16), h = ft_u32(f, at + 20);
+    return w >= 1 && h >= 1 && w <= 1024 && h <= 1024;
+}
+
+static int ft_cblc_glyph(const goome_font *f, uint32_t sz, int g, uint32_t *at, uint32_t *len, int *fmt, int *mw, int *mh, int *bx, int *by)
+{
+    uint32_t arr = f->cblc + ft_u32(f, sz), n = ft_u32(f, sz + 8);
+    if ((uint32_t)g < ft_u16(f, sz + 40) || (uint32_t)g > ft_u16(f, sz + 42)) return 0;
+    for (uint32_t i = 0; i < n && i < 4096; i++) {
+        uint32_t r = arr + i * 8, first = ft_u16(f, r), last = ft_u16(f, r + 2);
+        if ((uint32_t)g < first || (uint32_t)g > last) continue;
+        uint32_t st = arr + ft_u32(f, r + 4), ifmt = ft_u16(f, st), base = f->cbdt + ft_u32(f, st + 4), k = (uint32_t)g - first, a = 0, b = 0;
+        *fmt = (int)ft_u16(f, st + 2);
+        uint32_t big = 0;
+        if (ifmt == 1) a = ft_u32(f, st + 8 + k * 4), b = ft_u32(f, st + 12 + k * 4);
+        else if (ifmt == 3) a = ft_u16(f, st + 8 + k * 2), b = ft_u16(f, st + 10 + k * 2);
+        else if (ifmt == 2) {
+            uint32_t isz = ft_u32(f, st + 8);
+            a = isz * k, b = a + isz, big = st + 12;
+            if (isz && k > 0xFFFFFFFFu / isz - 1) return 0;
+        } else if (ifmt == 4) {
+            uint32_t ng = ft_u32(f, st + 8);
+            for (uint32_t j = 0; j < ng && j < 65536; j++) {
+                uint32_t e = st + 12 + j * 4;
+                if (ft_u16(f, e) == (uint32_t)g) {
+                    a = ft_u16(f, e + 2), b = ft_u16(f, e + 6);
+                    break;
+                }
+            }
+        } else if (ifmt == 5) {
+            uint32_t isz = ft_u32(f, st + 8), ng = ft_u32(f, st + 20);
+            big = st + 12;
+            for (uint32_t j = 0; j < ng && j < 65536; j++)
+                if (ft_u16(f, st + 24 + j * 2) == (uint32_t)g) {
+                    if (isz && j > 0xFFFFFFFFu / isz - 1) return 0;
+                    a = isz * j, b = a + isz;
+                    break;
+                }
+        } else
+            return 0;
+        if (b <= a || base + a < base) return 0;
+        uint32_t p = base + a, e = b - a;
+        if (*fmt == 17) {
+            *mh = (int)ft_u8(f, p), *mw = (int)ft_u8(f, p + 1), *bx = (int)(ft_u8(f, p + 2) ^ 0x80) - 0x80, *by = (int)(ft_u8(f, p + 3) ^ 0x80) - 0x80;
+            *len = ft_u32(f, p + 5), *at = p + 9;
+            if (e < 9 || *len > e - 9) return 0;
+        } else if (*fmt == 18) {
+            *mh = (int)ft_u8(f, p), *mw = (int)ft_u8(f, p + 1), *bx = (int)(ft_u8(f, p + 2) ^ 0x80) - 0x80, *by = (int)(ft_u8(f, p + 3) ^ 0x80) - 0x80;
+            *len = ft_u32(f, p + 8), *at = p + 12;
+            if (e < 12 || *len > e - 12) return 0;
+        } else if (*fmt == 19 && big) {
+            *mh = (int)ft_u8(f, big), *mw = (int)ft_u8(f, big + 1), *bx = (int)(ft_u8(f, big + 2) ^ 0x80) - 0x80, *by = (int)(ft_u8(f, big + 3) ^ 0x80) - 0x80;
+            *len = ft_u32(f, p), *at = p + 4;
+            if (e < 4 || *len > e - 4) return 0;
+        } else
+            return 0;
+        return ft_png_ok(f, *at, *len);
+    }
+    return 0;
+}
+
+static int ft_better(int ppem, int best, int want)
+{
+    if (best <= 0) return 1;
+    if (ppem >= want) return best < want || ppem < best;
+    return best < want && ppem > best;
+}
+
+static int ft_bitmap_find(const goome_font *f, int g, int want, uint32_t *at, uint32_t *len, int *ppem, int *bx, int *by)
+{
+    int best = 0;
+    if (f->cblc) {
+        uint32_t ns = ft_u32(f, f->cblc + 4);
+        for (uint32_t i = 0; i < ns && i < 64; i++) {
+            uint32_t sz = f->cblc + 8 + i * 48;
+            int pp = (int)ft_u8(f, sz + 45), fmt, mw, mh, x, y;
+            uint32_t a, l;
+            if (pp < 1 || !ft_better(pp, best, want) || !ft_cblc_glyph(f, sz, g, &a, &l, &fmt, &mw, &mh, &x, &y)) continue;
+            best = pp, *at = a, *len = l, *bx = x, *by = y;
+        }
+    }
+    if (f->sbix && !best) {
+        uint32_t ns = ft_u32(f, f->sbix + 4);
+        for (uint32_t i = 0; i < ns && i < 64; i++) {
+            uint32_t st = f->sbix + ft_u32(f, f->sbix + 8 + i * 4);
+            int pp = (int)ft_u16(f, st), gg = g;
+            if (pp < 1 || !ft_better(pp, best, want)) continue;
+            for (int hop = 0; hop < 2; hop++) {
+                uint32_t a = ft_u32(f, st + 4 + (uint32_t)gg * 4), b = ft_u32(f, st + 8 + (uint32_t)gg * 4);
+                if ((uint32_t)gg >= (uint32_t)f->nglyphs || b <= a + 8 || st + a < st) break;
+                uint32_t p = st + a, tag = ft_u32(f, p + 4);
+                if (tag == 0x64757065u && hop == 0) {
+                    gg = (int)ft_u16(f, p + 8);
+                    continue;
+                }
+                if (tag != 0x706E6720u || !ft_png_ok(f, p + 8, b - a - 8)) break;
+                int h = (int)ft_u32(f, p + 8 + 20);
+                best = pp, *at = p + 8, *len = b - a - 8, *bx = ft_s16(f, p), *by = ft_s16(f, p + 2) + h;
+                break;
+            }
+        }
+    }
+    *ppem = best;
+    return best > 0;
+}
+
+static int64_t ft_sc(int64_t v, int px64, int ppem) { return ft_divr(v * px64, (int64_t)ppem * 64); }
+
+static int ft_bitmap_glyph(goome_font *f, int g, int px64, ft_cent *e)
+{
+    uint32_t at, len;
+    int pp, bx, by;
+    if (!ft_bitmap_find(f, g, (px64 + 63) / 64, &at, &len, &pp, &bx, &by)) return 0;
+    goome_bitmap bm;
+    if (goome_bitmap_load_mem(f->d + at, len, &bm) != GOOME_OK) return 0;
+    int64_t w = ft_sc(bm.w, px64, pp), h = ft_sc(bm.h, px64, pp);
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+    int ok = 0;
+    if (w <= FT_MAXDIM && h <= FT_MAXDIM && w * h <= 1048576) {
+        e->px = malloc((size_t)(w * h) * 4);
+        if (e->px) {
+            ft_scale(bm.px, bm.w, bm.h, bm.stride, e->px, (int)w, (int)h);
+            e->w = (int16_t)w, e->h = (int16_t)h, e->l = (int16_t)ft_sc(bx, px64, pp), e->t = (int16_t)-ft_sc(by, px64, pp);
+            ok = 1;
+        }
+    }
+    goome_bitmap_free(&bm);
+    return ok;
+}
+
+static uint32_t ft_pal(const goome_font *f, uint32_t idx, uint32_t argb)
+{
+    uint32_t p = f->cpal;
+    if (idx == 0xFFFF || idx >= ft_u16(f, p + 2)) return argb | 0xFF000000u;
+    uint32_t r = p + ft_u32(f, p + 8) + (ft_u16(f, p + 12) + idx) * 4;
+    if (!ft_has(f, r, 4)) return argb | 0xFF000000u;
+    return ft_u8(f, r + 3) << 24 | ft_u8(f, r + 2) << 16 | ft_u8(f, r + 1) << 8 | ft_u8(f, r);
+}
+
+static int ft_colr_layers(const goome_font *f, int g, uint32_t *first, uint32_t *num)
+{
+    uint32_t o = f->colr, nb = ft_u16(f, o + 2), bo = o + ft_u32(f, o + 4), lo = 0, hi = nb;
+    while (lo < hi) {
+        uint32_t m = (lo + hi) / 2, r = bo + m * 6, v = ft_u16(f, r);
+        if (v == (uint32_t)g) {
+            *first = ft_u16(f, r + 2), *num = ft_u16(f, r + 4);
+            if (*num > 256) *num = 256;
+            return *num > 0 && ft_has(f, o + ft_u32(f, o + 8), (*first + *num) * 4);
+        }
+        if (v < (uint32_t)g) lo = m + 1;
+        else hi = m;
+    }
+    return 0;
+}
+
+static int ft_colr_glyph(goome_font *f, int g, int64_t sx, int64_t sy, uint32_t argb, ft_cent *e)
+{
+    uint32_t first, num;
+    if (!ft_colr_layers(f, g, &first, &num)) return 0;
+    uint32_t lay = f->colr + ft_u32(f, f->colr + 8) + first * 4;
+    int x0 = 1 << 30, y0 = 1 << 30, x1 = -(1 << 30), y1 = -(1 << 30);
+    for (uint32_t i = 0; i < num; i++) {
+        int w, h, l, t, lg = (int)ft_u16(f, lay + i * 4);
+        if (lg >= f->nglyphs || !ft_render(f, lg, sx, sy, 0, &w, &h, &l, &t)) continue;
+        if (l < x0) x0 = l;
+        if (t < y0) y0 = t;
+        if (l + w > x1) x1 = l + w;
+        if (t + h > y1) y1 = t + h;
+    }
+    if (x1 <= x0 || y1 <= y0 || (int64_t)(x1 - x0) * (y1 - y0) > 1048576) return 0;
+    int W = x1 - x0, H = y1 - y0;
+    uint32_t *out = calloc((size_t)W * H, 4);
+    if (!out) return 0;
+    for (uint32_t i = 0; i < num; i++) {
+        int w, h, l, t, lg = (int)ft_u16(f, lay + i * 4);
+        if (lg >= f->nglyphs || !ft_render(f, lg, sx, sy, 0, &w, &h, &l, &t)) continue;
+        uint32_t col = ft_pal(f, ft_u16(f, lay + i * 4 + 2), argb), A = col >> 24, R = col >> 16 & 255, G = col >> 8 & 255, B = col & 255;
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++) {
+                uint32_t cov = f->tmp[(size_t)y * w + x];
+                if (!cov) continue;
+                uint32_t a = (A * cov + 127) / 255, *d = &out[(size_t)(y + t - y0) * W + (x + l - x0)], v = *d, inv = 255 - a;
+                uint32_t s = a << 24 | ((R * a + 127) / 255) << 16 | ((G * a + 127) / 255) << 8 | ((B * a + 127) / 255);
+                uint32_t rb = (v & 0xFF00FF) * inv + 0x800080, ag = (v >> 8 & 0xFF00FF) * inv + 0x800080;
+                *d = s + ((rb + (rb >> 8 & 0xFF00FF)) >> 8 & 0xFF00FF) + ((ag + (ag >> 8 & 0xFF00FF)) & 0xFF00FF00);
+            }
+    }
+    e->px = out, e->w = (int16_t)W, e->h = (int16_t)H, e->l = (int16_t)x0, e->t = (int16_t)y0;
+    return 1;
+}
+
+static const ft_cent *ft_cglyph(goome_font *f, int g, int px64, int64_t sx, int64_t sy, uint32_t argb)
+{
+    if (!f->color || px64 <= 0) return NULL;
+    if (!f->cc && !(f->cc = calloc(FT_CC, sizeof(ft_cent)))) return NULL;
+    uint32_t key = f->colr ? argb | 0xFF000000u : 0, h = (((uint32_t)g * 2654435761u) ^ ((uint32_t)px64 * 40503u) ^ key) & (FT_CC - 1);
+    for (;;) {
+        ft_cent *e = &f->cc[h];
+        if (!e->px64) break;
+        if (e->g == (uint32_t)g && e->px64 == (uint32_t)px64 && e->argb == key) return e->px ? e : NULL;
+        h = (h + 1) & (FT_CC - 1);
+    }
+    if (f->ncc >= FT_CC * 3 / 4 || f->ccb > (16u << 20)) {
+        ft_cc_clear(f);
+        h = (((uint32_t)g * 2654435761u) ^ ((uint32_t)px64 * 40503u) ^ key) & (FT_CC - 1);
+    }
+    ft_cent *e = &f->cc[h];
+    memset(e, 0, sizeof(*e));
+    e->g = (uint32_t)g, e->px64 = (uint32_t)px64, e->argb = key;
+    f->ncc++;
+    if (!(f->colr && ft_colr_glyph(f, g, sx, sy, argb, e)) && !((f->cblc || f->sbix) && ft_bitmap_glyph(f, g, px64, e))) return NULL;
+    f->ccb += (size_t)e->w * e->h * 4;
+    return e;
+}
+
+static int ft_ucls(uint32_t cp)
+{
+    int lo = 0, hi = (int)(sizeof(ud_bidi) / sizeof(ud_bidi[0])) - 1;
+    while (lo < hi) {
+        int m = (lo + hi + 1) / 2;
+        if ((ud_bidi[m] >> 5) <= cp) lo = m;
+        else hi = m - 1;
+    }
+    return (int)(ud_bidi[lo] & 31);
+}
+
+static uint32_t ft_mirror(uint32_t cp)
+{
+    int lo = 0, hi = (int)(sizeof(ud_mirror) / sizeof(ud_mirror[0]) / 2);
+    while (lo < hi) {
+        int m = (lo + hi) / 2;
+        if (ud_mirror[m * 2] == cp) return ud_mirror[m * 2 + 1];
+        if (ud_mirror[m * 2] < cp) lo = m + 1;
+        else hi = m;
+    }
+    return 0;
+}
+
+static const uint16_t *ft_forms(uint32_t cp)
+{
+    int lo = 0, hi = (int)(sizeof(ud_forms) / sizeof(ud_forms[0]) / 5);
+    if (cp < 0x600 || cp > 0x7FF) return NULL;
+    while (lo < hi) {
+        int m = (lo + hi) / 2;
+        if (ud_forms[m * 5] == cp) return ud_forms + m * 5 + 1;
+        if (ud_forms[m * 5] < cp) lo = m + 1;
+        else hi = m;
+    }
+    return NULL;
+}
+
+static int ft_emo_pres(uint32_t cp)
+{
+    if (cp >= 0x1F000 && cp <= 0x1FAFF) return cp < 0x1F100 || cp > 0x1F1E5 || (cp >= 0x1F18E && cp <= 0x1F19A);
+    for (size_t i = 0; i < sizeof(ud_emoji) / sizeof(ud_emoji[0]); i += 2)
+        if (cp >= ud_emoji[i] && cp <= ud_emoji[i + 1]) return 1;
+    return 0;
+}
+
+static int ft_ri(uint32_t cp) { return cp >= 0x1F1E6 && cp <= 0x1F1FF; }
+static int ft_vs(uint32_t cp) { return (cp >= 0xFE00 && cp <= 0xFE0F) || (cp >= 0xE0100 && cp <= 0xE01EF); }
+
+static int ft_ignorable(uint32_t cp)
+{
+    return cp == 0xAD || cp == 0x34F || cp == 0x61C || (cp >= 0x180B && cp <= 0x180F) || (cp >= 0x200B && cp <= 0x200F) || (cp >= 0x202A && cp <= 0x202E) ||
+           (cp >= 0x2060 && cp <= 0x206F) || cp == 0xFEFF || ft_vs(cp) || (cp >= 0xE0000 && cp <= 0xE0FFF);
+}
+
+static int ft_extend(uint32_t cp)
+{
+    if (cp < 0x300) return 0;
+    return ft_vs(cp) || cp == 0x200D || cp == 0x20E3 || (cp >= 0x1F3FB && cp <= 0x1F3FF) || (cp >= 0xE0020 && cp <= 0xE007F) || ft_ucls(cp) == UD_NSM;
+}
+
+static int ft_alef(uint32_t cp) { return cp == 0x622 || cp == 0x623 || cp == 0x625 || cp == 0x627; }
+
+static int ft_brk(uint32_t prev, uint32_t cp, int nri, int len)
+{
+    if (len >= 32 || cp < 32 || prev < 32 || cp == 127 || prev == 127) return 1;
+    if (ft_extend(cp) || prev == 0x200D) return 0;
+    if (ft_ri(cp) && ft_ri(prev) && nri == 1) return 0;
+    if (prev == 0x644 && ft_alef(cp)) return 0;
+    return 1;
+}
+
+static int ft_dir_mode;
+
+void goome_text_dir(int dir) { ft_dir_mode = dir == GOOME_DIR_LTR || dir == GOOME_DIR_RTL ? dir : GOOME_DIR_AUTO; }
+
+static uint32_t ft_utf8n(const char **ps, const char *end)
+{
+    const unsigned char *s = (const unsigned char *)*ps;
+    size_t left = (size_t)(end - *ps);
+    uint32_t c = s[0];
+    int n = 0;
+    uint32_t min = 0;
+    if (c < 0x80) {
+        *ps += 1;
+        return c;
+    }
+    if (c >= 0xC2 && c <= 0xDF) n = 1, c &= 31, min = 0x80;
+    else if (c >= 0xE0 && c <= 0xEF) n = 2, c &= 15, min = 0x800;
+    else if (c >= 0xF0 && c <= 0xF4) n = 3, c &= 7, min = 0x10000;
+    else {
+        *ps += 1;
+        return 0xFFFD;
+    }
+    for (int i = 1; i <= n; i++) {
+        if ((size_t)i >= left || (s[i] & 0xC0) != 0x80) {
+            *ps += i;
+            return 0xFFFD;
+        }
+        c = c << 6 | (s[i] & 63);
+    }
+    *ps += n + 1;
+    if (c < min || c > 0x10FFFF || (c >= 0xD800 && c <= 0xDFFF)) return 0xFFFD;
+    return c;
+}
+
+int gm_text_next(const char *s, int i, int n)
+{
+    if (!s || i >= n) return n < 0 ? 0 : n;
+    const char *p = s + i, *e = s + n;
+    uint32_t prev = ft_utf8n(&p, e);
+    int nri = ft_ri(prev), len = 1;
+    while (p < e) {
+        const char *q = p;
+        uint32_t cp = ft_utf8n(&q, e);
+        if (ft_brk(prev, cp, nri, len)) break;
+        nri += ft_ri(cp), len++, prev = cp, p = q;
+    }
+    return (int)(p - s);
+}
+
+int gm_text_prev(const char *s, int i)
+{
+    if (!s || i <= 0) return 0;
+    int st = i;
+    for (int hop = 0; st > 0 && hop < 64;) {
+        st--;
+        while (st > 0 && ((unsigned char)s[st] & 0xC0) == 0x80) st--;
+        const char *p = s + st;
+        uint32_t cp = ft_utf8n(&p, s + i);
+        if (ft_extend(cp) || ft_ri(cp) || ft_alef(cp) || cp == 0x200D) {
+            hop++;
+            continue;
+        }
+        if (st > 0) {
+            int b = st - 1;
+            while (b > 0 && ((unsigned char)s[b] & 0xC0) == 0x80) b--;
+            p = s + b;
+            if (ft_utf8n(&p, s + st) == 0x200D) {
+                hop++;
+                continue;
+            }
+        }
+        break;
+    }
+    int last = st;
+    for (int k = st; k < i;) {
+        last = k;
+        k = gm_text_next(s, k, i);
+    }
+    return last;
+}
+
+static int ft_scratch(goome_font *f, int m)
+{
+    if (m <= f->scap) return 1;
+    int c = f->scap ? f->scap : 256;
+    while (c < m) {
+        if (c > (1 << 24)) return 0;
+        c *= 2;
+    }
+    uint32_t *a = realloc(f->scp, (size_t)c * 4);
+    if (a) f->scp = a;
+    uint32_t *b = realloc(f->ssh, (size_t)c * 4);
+    if (b) f->ssh = b;
+    int *o = realloc(f->soff, (size_t)(c + 1) * sizeof(int));
+    if (o) f->soff = o;
+    int *cs = realloc(f->scs, (size_t)(c + 1) * sizeof(int));
+    if (cs) f->scs = cs;
+    int *od = realloc(f->sord, (size_t)(c + 1) * sizeof(int));
+    if (od) f->sord = od;
+    uint8_t *k1 = realloc(f->scl, (size_t)c);
+    if (k1) f->scl = k1;
+    uint8_t *k2 = realloc(f->swk, (size_t)c);
+    if (k2) f->swk = k2;
+    uint8_t *k3 = realloc(f->slv, (size_t)c);
+    if (k3) f->slv = k3;
+    if (!a || !b || !o || !cs || !od || !k1 || !k2 || !k3) return 0;
+    f->scap = c;
+    return 1;
+}
+
+static int ft_strong(int t) { return t == UD_L ? UD_L : (t == UD_R || t == UD_AL || t == UD_EN || t == UD_AN) ? UD_R : -1; }
+
+static int ft_bracket(uint32_t cp)
+{
+    static const uint32_t pairs[] = {'(', ')', '[', ']', '{', '}', 0x2045, 0x2046, 0x207D, 0x207E, 0x208D, 0x208E, 0x2329, 0x232A, 0x3008, 0x3009, 0x300A, 0x300B,
+                                     0x300C, 0x300D, 0x300E, 0x300F, 0x3010, 0x3011, 0xFF08, 0xFF09, 0xFF3B, 0xFF3D, 0xFF5B, 0xFF5D};
+    for (int i = 0; i < (int)(sizeof(pairs) / sizeof(pairs[0])); i++)
+        if (pairs[i] == cp) return i & 1 ? -(i / 2 + 1) : i / 2 + 1;
+    return 0;
+}
+
+static void ft_pairs(const uint32_t *cp, uint8_t *t, int m, int e, int sos)
+{
+    int st[63][2], ns = 0, pr[64][2], np = 0;
+    for (int i = 0; i < m && np < 64; i++) {
+        if (t[i] != UD_ON) continue;
+        int b = ft_bracket(cp[i]);
+        if (b > 0) {
+            if (ns == 63) break;
+            st[ns][0] = b, st[ns][1] = i, ns++;
+        } else if (b < 0) {
+            for (int k = ns - 1; k >= 0; k--)
+                if (st[k][0] == -b) {
+                    int j = np++;
+                    while (j > 0 && pr[j - 1][0] > st[k][1]) pr[j][0] = pr[j - 1][0], pr[j][1] = pr[j - 1][1], j--;
+                    pr[j][0] = st[k][1], pr[j][1] = i, ns = k;
+                    break;
+                }
+        }
+    }
+    int dir = e & 1 ? UD_R : UD_L;
+    for (int p = 0; p < np; p++) {
+        int a = pr[p][0], z = pr[p][1], in = -1, set = -1;
+        for (int i = a + 1; i < z; i++) {
+            int s = ft_strong(t[i]);
+            if (s == dir) {
+                in = dir;
+                break;
+            }
+            if (s >= 0) in = s;
+        }
+        if (in == dir) set = dir;
+        else if (in >= 0) {
+            int before = sos;
+            for (int i = a - 1; i >= 0; i--)
+                if (ft_strong(t[i]) >= 0) {
+                    before = ft_strong(t[i]);
+                    break;
+                }
+            set = before == in ? in : dir;
+        }
+        if (set < 0) continue;
+        t[a] = t[z] = (uint8_t)set;
+    }
+}
+
+static void ft_levels(const uint32_t *cp, const uint8_t *cls, uint8_t *t, uint8_t *lv, int m, int e)
+{
+    int sos = e & 1 ? UD_R : UD_L;
+    for (int i = 0; i < m; i++) {
+        int c = cls[i];
+        if (c >= UD_LRE && c <= UD_PDF) c = UD_BN;
+        else if (c >= UD_LRI) c = UD_ON;
+        t[i] = (uint8_t)c;
+    }
+    for (int i = 0; i < m; i++)
+        if (t[i] == UD_NSM || t[i] == UD_BN) t[i] = (uint8_t)(i ? t[i - 1] : sos);
+    int last = sos;
+    for (int i = 0; i < m; i++) {
+        if (t[i] == UD_L || t[i] == UD_R || t[i] == UD_AL) last = t[i];
+        else if (t[i] == UD_EN && last == UD_AL) t[i] = UD_AN;
+    }
+    for (int i = 0; i < m; i++)
+        if (t[i] == UD_AL) t[i] = UD_R;
+    for (int i = 1; i + 1 < m; i++) {
+        if (t[i] == UD_ES && t[i - 1] == UD_EN && t[i + 1] == UD_EN) t[i] = UD_EN;
+        else if (t[i] == UD_CS && t[i - 1] == t[i + 1] && (t[i - 1] == UD_EN || t[i - 1] == UD_AN)) t[i] = t[i - 1];
+    }
+    for (int i = 0; i < m;) {
+        if (t[i] != UD_ET) {
+            i++;
+            continue;
+        }
+        int k = i;
+        while (k < m && t[k] == UD_ET) k++;
+        if ((i > 0 && t[i - 1] == UD_EN) || (k < m && t[k] == UD_EN))
+            for (int j = i; j < k; j++) t[j] = UD_EN;
+        i = k;
+    }
+    for (int i = 0; i < m; i++)
+        if (t[i] == UD_ES || t[i] == UD_ET || t[i] == UD_CS) t[i] = UD_ON;
+    last = sos;
+    for (int i = 0; i < m; i++) {
+        if (t[i] == UD_L || t[i] == UD_R) last = t[i];
+        else if (t[i] == UD_EN && last == UD_L) t[i] = UD_L;
+    }
+    ft_pairs(cp, t, m, e, sos);
+    for (int i = 0; i < m;) {
+        if (ft_strong(t[i]) >= 0) {
+            i++;
+            continue;
+        }
+        int k = i;
+        while (k < m && ft_strong(t[k]) < 0) k++;
+        int a = i ? ft_strong(t[i - 1]) : sos, b = k < m ? ft_strong(t[k]) : sos, d = a == b ? a : (e & 1 ? UD_R : UD_L);
+        for (int j = i; j < k; j++) t[j] = (uint8_t)d;
+        i = k;
+    }
+    for (int i = 0; i < m; i++) {
+        int l = e;
+        if (!(e & 1)) l += t[i] == UD_R ? 1 : (t[i] == UD_AN || t[i] == UD_EN) ? 2 : 0;
+        else l += (t[i] == UD_L || t[i] == UD_EN || t[i] == UD_AN) ? 1 : 0;
+        lv[i] = (uint8_t)l;
+    }
+    for (int i = m - 1, tail = 1; i >= 0; i--) {
+        int c = cls[i];
+        if (c == UD_S || c == UD_B) lv[i] = (uint8_t)e, tail = 1;
+        else if (tail && (c == UD_WS || c == UD_BN || (c >= UD_LRE && c <= UD_PDI))) lv[i] = (uint8_t)e;
+        else tail = 0;
+    }
+}
+
+static int ft_has_cp(goome_font **ch, int nch, uint32_t cp)
+{
+    for (int i = 0; i < nch; i++)
+        if (ft_cmap(ch[i], cp)) return 1;
+    return 0;
+}
+
+static int ft_jtype(uint32_t cp)
+{
+    if (cp == 0x640 || cp == 0x200D) return 'C';
+    const uint16_t *fm = ft_forms(cp);
+    if (fm) return fm[2] || fm[3] ? 'D' : fm[1] ? 'R' : 'U';
+    return cp >= 0x300 && ft_ucls(cp) == UD_NSM ? 'T' : 'U';
+}
+
+static void ft_arabic(goome_font **ch, int nch, const uint32_t *cp, uint32_t *out, int m)
+{
+    for (int i = 0; i < m; i++) {
+        int ti = ft_jtype(cp[i]);
+        const uint16_t *fm = ft_forms(cp[i]);
+        if (!fm || (ti != 'D' && ti != 'R')) continue;
+        int p = i - 1, n = i + 1;
+        while (p >= 0 && ft_jtype(cp[p]) == 'T') p--;
+        while (n < m && ft_jtype(cp[n]) == 'T') n++;
+        int tp = p >= 0 ? ft_jtype(cp[p]) : 'U', tn = n < m ? ft_jtype(cp[n]) : 'U';
+        int jp = tp == 'D' || tp == 'C', jn = ti == 'D' && (tn == 'D' || tn == 'R' || tn == 'C');
+        if (cp[i] == 0x644 && i + 1 < m && ft_alef(cp[i + 1])) {
+            for (size_t k = 0; k < sizeof(ud_lamalef) / sizeof(ud_lamalef[0]); k += 3)
+                if (ud_lamalef[k] == cp[i + 1]) {
+                    uint32_t lg = ud_lamalef[k + 1 + (jp ? 1 : 0)];
+                    if (ft_has_cp(ch, nch, lg)) out[i] = lg, out[i + 1] = 0;
+                    break;
+                }
+            if (!out[i + 1]) {
+                i++;
+                continue;
+            }
+        }
+        int want = jp && jn ? 3 : jp ? 1 : jn ? 2 : 0;
+        if (want == 3 && !fm[3]) want = 1;
+        if (want == 2 && !fm[2]) want = 0;
+        if (want == 1 && !fm[1]) want = 0;
+        uint32_t c = fm[want];
+        if (c && ft_has_cp(ch, nch, c)) out[i] = c;
+    }
+}
+
+static int ft_pick(goome_font **ch, int nch, uint32_t cp, int pref, int *fi)
+{
+    for (int pass = 0; pass < (pref ? 2 : 1); pass++)
+        for (int i = 0; i < nch; i++) {
+            int col = ch[i]->color != 0;
+            if (pref == 1 && (pass == 0) != col) continue;
+            if (pref == 2 && (pass == 0) == col) continue;
+            int g = ft_cmap(ch[i], cp);
+            if (g) {
+                *fi = i;
+                return g;
+            }
+        }
+    *fi = 0;
+    return 0;
+}
+
+static int ft_uvs(const goome_font *f, uint32_t base, uint32_t vs)
+{
+    uint32_t o = f->uvs, n = ft_u32(f, o + 6);
+    if (!o) return -1;
+    for (uint32_t i = 0; i < n && i < 256; i++) {
+        uint32_t r = o + 10 + i * 11;
+        if ((ft_u32(f, r) >> 8) != vs) continue;
+        uint32_t nd = ft_u32(f, r + 7);
+        if (!nd) return -1;
+        uint32_t t = o + nd, cnt = ft_u32(f, t), lo = 0, hi = cnt < 1000000 ? cnt : 1000000;
+        while (lo < hi) {
+            uint32_t m = (lo + hi) / 2, u = ft_u32(f, t + 4 + m * 5) >> 8;
+            if (u == base) {
+                int g = (int)ft_u16(f, t + 4 + m * 5 + 3);
+                return g < f->nglyphs ? g : -1;
+            }
+            if (u < base) lo = m + 1;
+            else hi = m;
+        }
+        return -1;
+    }
+    return -1;
+}
+
+static int ft_liga(const goome_font *f, int *g, uint32_t *src, int n)
+{
+    for (int li = 0; li < f->nlig && n > 1; li++) {
+        uint32_t st = f->lig[li], cov = st + ft_u16(f, st + 2), nset = ft_u16(f, st + 4);
+        for (int i = 0; i < n; i++) {
+            int ci = ft_coverage(f, cov, g[i]);
+            if (ci < 0 || (uint32_t)ci >= nset) continue;
+            uint32_t set = st + ft_u16(f, st + 6 + (uint32_t)ci * 2), nl = ft_u16(f, set);
+            for (uint32_t k = 0; k < nl && k < 4096; k++) {
+                uint32_t lg = set + ft_u16(f, set + 2 + k * 2), cc = ft_u16(f, lg + 2), out = ft_u16(f, lg);
+                if (cc < 1 || cc > 32 || i + (int)cc > n || out >= (uint32_t)f->nglyphs) continue;
+                int ok = 1;
+                for (uint32_t q = 1; q < cc && ok; q++) ok = ft_u16(f, lg + 4 + (q - 1) * 2) == (uint32_t)g[i + (int)q];
+                if (!ok) continue;
+                g[i] = (int)out;
+                if (cc > 1) {
+                    memmove(g + i + 1, g + i + cc, sizeof(int) * (size_t)(n - i - (int)cc));
+                    memmove(src + i + 1, src + i + cc, sizeof(uint32_t) * (size_t)(n - i - (int)cc));
+                    n -= (int)cc - 1;
+                }
+                break;
+            }
+        }
+    }
+    return n;
+}
+
+static int ft_emit(goome_font *f, int64_t adv, int fi, int g, int lo, int hi, int rtl, int kind, int *ng)
+{
+    if (*ng >= f->sglcap) {
+        int c = f->sglcap ? f->sglcap * 2 : 256;
+        ft_gl *n = realloc(f->sgl, sizeof(ft_gl) * (size_t)c);
+        if (!n) return 0;
+        f->sgl = n, f->sglcap = c;
+    }
+    ft_gl *e = &f->sgl[(*ng)++];
+    e->g = g, e->lo = lo, e->hi = hi, e->adv = adv, e->fi = (uint8_t)fi, e->rtl = (uint8_t)rtl, e->kind = (uint8_t)kind;
+    return 1;
+}
+
+static int64_t ft_adv_in(goome_font *f, goome_font *o, int g)
+{
+    int64_t a = ft_adv(o, g);
+    return o == f ? a : ft_divr(a * f->upem, o->upem);
+}
+
+static int ft_cluster(goome_font *f, goome_font **ch, int nch, int a, int b, int rtl, int *ng)
+{
+    const uint32_t *ocp = f->scp, *cp = f->ssh;
+    int lo = f->soff[a], hi = f->soff[b];
+    uint32_t c0 = ocp[a];
+    if (c0 == '\t') return ft_emit(f, 0, 0, 0, lo, hi, rtl, 1, ng);
+    if (c0 < 32 || c0 == 127) return ft_emit(f, 0, 0, 0, lo, hi, rtl, 2, ng);
+    int pref = ft_emo_pres(c0) || ft_ri(c0) ? 1 : 0, vs = 0;
+    for (int k = a + 1; k < b; k++) {
+        uint32_t c = ocp[k];
+        if (c == 0xFE0E) pref = 2;
+        else if (c == 0xFE0F || c == 0x20E3 || c == 0x200D || (c >= 0x1F3FB && c <= 0x1F3FF) || (c >= 0xE0020 && c <= 0xE007F)) pref = pref == 2 ? 2 : 1;
+        if (ft_vs(c) && !vs) vs = (int)c;
+    }
+    int fi = 0, k0 = a;
+    while (k0 < b && !cp[k0]) k0++;
+    if (k0 >= b) return ft_emit(f, 0, 0, 0, lo, hi, rtl, 2, ng);
+    int g0 = ft_pick(ch, nch, cp[k0], pref, &fi);
+    if (!g0 && ft_ignorable(cp[k0]) && b - a == 1) return ft_emit(f, 0, 0, 0, lo, hi, rtl, 2, ng);
+    goome_font *F = ch[fi];
+    if (vs) {
+        int u = ft_uvs(F, cp[k0], (uint32_t)vs);
+        if (u > 0) g0 = u;
+    }
+    int gs[32], fs[32], n = 0;
+    uint32_t src[32];
+    for (int k = k0; k < b && n < 32; k++) {
+        uint32_t c = cp[k];
+        if (!c) continue;
+        int g = k == k0 ? g0 : ft_cmap(F, c), gf = fi;
+        if (!g && k > k0) {
+            if (ft_ignorable(c)) continue;
+            g = ft_pick(ch, nch, c, 0, &gf);
+            if (!g) gf = fi;
+        }
+        gs[n] = g, fs[n] = gf, src[n] = c, n++;
+    }
+    if (n > 1 && F->nlig) {
+        int same = 1;
+        for (int k = 1; k < n; k++) same &= fs[k] == fi;
+        if (same) n = ft_liga(F, gs, src, n);
+    }
+    int w = 0;
+    for (int k = 0; k < n; k++)
+        if (!(n > 1 && ft_ignorable(src[k]))) gs[w] = gs[k], fs[w] = fs[k], src[w] = src[k], w++;
+    n = w;
+    if (!n) return ft_emit(f, 0, 0, 0, lo, hi, rtl, 2, ng);
+    for (int q = 0; q < n; q++) {
+        int k = rtl ? n - 1 - q : q;
+        if (!ft_emit(f, ft_adv_in(f, ch[fs[k]], gs[k]), fs[k], gs[k], lo, hi, rtl, 0, ng)) return 0;
+    }
+    return 1;
+}
+
+static int ft_chain(goome_font *f, goome_font **ch)
+{
+    int n = 1;
+    ch[0] = f;
+    for (int i = 0; i < n && n < 16; i++)
+        for (int k = 0; k < ch[i]->nfb && n < 16; k++) {
+            goome_font *c = ch[i]->fb[k];
+            int dup = 0;
+            for (int j = 0; j < n; j++) dup |= ch[j] == c;
+            if (!dup) ch[n++] = c;
+        }
+    return n;
+}
+
+static int ft_line_dir(goome_font *f, int m)
+{
+    if (ft_dir_mode == GOOME_DIR_RTL) return 1;
+    if (ft_dir_mode == GOOME_DIR_LTR) return 0;
+    for (int i = 0; i < m; i++) {
+        int c = f->scl[i];
+        if (c == UD_L) return 0;
+        if (c == UD_R || c == UD_AL) return 1;
+    }
+    return 0;
+}
+
+static int ft_shape(goome_font *f, goome_font **ch, int nch, const char *s, int n, int *para)
+{
+    int m = 0, ng = 0, bidi = ft_dir_mode == GOOME_DIR_RTL, arab = 0;
+    if (para) *para = 0;
+    if (n <= 0) return 0;
+    if (!ft_scratch(f, n + 1)) return -1;
+    const char *p = s, *e = s + n;
+    while (p < e) {
+        uint32_t c;
+        f->soff[m] = (int)(p - s);
+        f->scp[m] = c = ft_utf8n(&p, e);
+        f->ssh[m] = c;
+        if (c >= 0x590) {
+            int k = ft_ucls(c);
+            bidi |= k == UD_R || k == UD_AL || k == UD_AN || k == UD_RLE || k == UD_RLO || k == UD_RLI;
+            arab |= (c >= 0x600 && c <= 0x6FF) || (c >= 0x750 && c <= 0x77F) || (c >= 0x8A0 && c <= 0x8FF);
+        }
+        m++;
+    }
+    f->soff[m] = n;
+    int base = 0;
+    if (bidi) {
+        for (int i = 0; i < m; i++) f->scl[i] = (uint8_t)ft_ucls(f->scp[i]);
+        base = ft_line_dir(f, m);
+        ft_levels(f->scp, f->scl, f->swk, f->slv, m, base);
+        for (int i = 0; i < m; i++)
+            if (f->slv[i] & 1) {
+                uint32_t mc = ft_mirror(f->scp[i]);
+                if (mc && ft_has_cp(ch, nch, mc)) f->ssh[i] = mc;
+            }
+    } else
+        memset(f->slv, 0, (size_t)m);
+    if (para) *para = base + (bidi ? 1 : 0);
+    if (arab) ft_arabic(ch, nch, f->scp, f->ssh, m);
+    int nc = 0, nri = 0, len = 0;
+    for (int i = 0; i < m; i++) {
+        if (!i || ft_brk(f->scp[i - 1], f->scp[i], nri, len)) f->scs[nc++] = i, nri = 0, len = 0;
+        nri += ft_ri(f->scp[i]), len++;
+    }
+    f->scs[nc] = m;
+    int top = 0, low = 255;
+    for (int k = 0; k < nc; k++) {
+        int l = f->slv[f->scs[k]];
+        f->sord[k] = k;
+        if (l > top) top = l;
+        if ((l & 1) && l < low) low = l;
+    }
+    for (int l = top; l >= low && l > 0; l--)
+        for (int k = 0; k < nc;) {
+            if (f->slv[f->scs[f->sord[k]]] < l) {
+                k++;
+                continue;
+            }
+            int j = k;
+            while (j < nc && f->slv[f->scs[f->sord[j]]] >= l) j++;
+            for (int x = k, y = j - 1; x < y; x++, y--) {
+                int t = f->sord[x];
+                f->sord[x] = f->sord[y], f->sord[y] = t;
+            }
+            k = j;
+        }
+    for (int q = 0; q < nc; q++) {
+        int k = f->sord[q], a = f->scs[k], b = f->scs[k + 1];
+        if (!ft_cluster(f, ch, nch, a, b, f->slv[a] & 1, &ng)) return -1;
+    }
+    return ng;
+}
+
+int gm_text_rtl(goome_font *f, const char *s, int n)
+{
+    if (!f || !s || n <= 0) return 0;
+    goome_font *ch[16];
+    int para = 0;
+    if (ft_dir_mode == GOOME_DIR_RTL) return 2;
+    int any = 0;
+    for (int i = 0; i < n && !any; i++) any = (unsigned char)s[i] >= 0xD6;
+    if (!any) return 0;
+    if (ft_shape(f, ch, ft_chain(f, ch), s, n, &para) < 0) return 0;
+    return para;
+}
+
+int gm_text_layout(goome_font *f, double size, const char *s, int n, gm_tc **out)
+{
+    *out = NULL;
+    if (!f || !s || n <= 0 || !ft_okd(size) || size <= 0) return 0;
+    goome_font *ch[16];
+    int nch = ft_chain(f, ch), ng = ft_shape(f, ch, nch, s, n, NULL), sp = ft_cmap(f, ' '), prev = -1, nb = 0;
+    if (ng <= 0) return 0;
+    gm_tc *b = malloc(sizeof(gm_tc) * (size_t)ng);
+    if (!b) return 0;
+    int64_t pen = 0;
+    for (int i = 0; i < ng; i++) {
+        ft_gl *e = &f->sgl[i];
+        int64_t x0 = pen;
+        if (e->kind == 1) pen += 4 * (int64_t)ft_adv(f, sp), prev = -1;
+        else if (e->kind == 0) {
+            if (e->fi == 0 && !e->rtl) {
+                if (prev >= 0) pen += ft_kern(f, prev, e->g), x0 = pen;
+                prev = e->g;
+            } else
+                prev = -1;
+            pen += e->adv;
+        }
+        double a = (double)x0 * size / f->upem, z = (double)pen * size / f->upem;
+        if (nb && b[nb - 1].lo == e->lo) {
+            if (a < b[nb - 1].x0) b[nb - 1].x0 = a;
+            if (z > b[nb - 1].x1) b[nb - 1].x1 = z;
+            continue;
+        }
+        b[nb].lo = e->lo, b[nb].hi = e->hi, b[nb].rtl = e->rtl, b[nb].x0 = a, b[nb].x1 = z;
+        nb++;
+    }
+    for (int i = 1; i < nb; i++) {
+        gm_tc t = b[i];
+        int j = i - 1;
+        while (j >= 0 && b[j].lo > t.lo) b[j + 1] = b[j], j--;
+        b[j + 1] = t;
+    }
+    *out = b;
+    return nb;
+}
+
+static void ft_scales(const goome_font *f, int px64, int64_t *sx, int64_t *sy)
+{
+    *sx = ((int64_t)px64 * 1048576 + f->upem / 2) / f->upem;
+    *sy = *sx;
+    if (px64 < 32 * 64 && f->xh > 0) {
+        int64_t xp = (int64_t)f->xh * 64 * *sx >> 24, want = (xp + 128) / 256 * 256;
+        if (want < 256) want = 256;
+        if (xp > 0) *sy = *sx * want / xp;
+    }
+}
 
 // draws (c != NULL) or measures. returns the widest line in logical px
 static double ft_run(goome_canvas *c, goome_font *f, double size, double x, double y, const char *s, uint32_t argb, int *lines)
@@ -1589,13 +2711,7 @@ static double ft_run(goome_canvas *c, goome_font *f, double size, double x, doub
         if (k[2] <= k[0] || k[3] <= k[1]) draw = 0;
     }
     if (draw) {
-        sx = ((int64_t)px64 * 1048576 + f->upem / 2) / f->upem;
-        sy = sx;
-        if (px64 < 32 * 64 && f->xh > 0) {
-            int64_t xp = (int64_t)f->xh * 64 * sx >> 24, want = (xp + 128) / 256 * 256;
-            if (want < 256) want = 256;
-            if (xp > 0) sy = sx * want / xp;
-        }
+        ft_scales(f, px64, &sx, &sy);
         ft_colors(f, argb);
         ox = (int64_t)ft_round((x - c->ox) * c->scale * 256);
         double top = (y - c->oy) * c->scale;
@@ -1603,35 +2719,54 @@ static double ft_run(goome_canvas *c, goome_font *f, double size, double x, doub
         base = (int64_t)ft_round(top + asc);
         lh = (int64_t)ft_round(lhl * c->scale * 256);
     }
+    goome_font *ch[16];
+    int64_t fsx[16], fsy[16];
+    int nch = ft_chain(f, ch);
+    fsx[0] = sx, fsy[0] = sy;
+    for (int i = 1; i < nch; i++) fsx[i] = fsy[i] = 0;
     int64_t pen = 0, best = 0, line0 = base * 256;
     int prev = -1, sp = ft_cmap(f, ' ');
-    while (*s) {
-        uint32_t cp = ft_utf8(&s);
-        if (cp == '\n') {
-            if (pen > best) best = pen;
-            pen = 0, prev = -1, (*lines)++;
-            line0 += lh;
-            continue;
-        }
-        if (cp == '\t') {
-            pen += 4 * (int64_t)ft_adv(f, sp), prev = -1;
-            continue;
-        }
-        if (cp < 32 || cp == 127 || cp == '\r') continue;
-        int g = ft_cmap(f, cp);
-        if (prev >= 0) pen += ft_kern(f, prev, g);
-        prev = g;
-        if (draw && pen * 64 < ((int64_t)1 << 62) / (sx + 1) && pen * 64 > -(((int64_t)1 << 62) / (sx + 1))) {
-            int64_t gx = ox + (pen * 64 * sx >> 24), ix = ft_fdiv(gx, 256), ph = ((gx - ix * 256) + 32) >> 6;
-            if (ph == 4) ph = 0, ix++;
-            int64_t by = ft_fdiv(line0 + 128, 256);
-            if (ix > -100000 && ix < 100000 && by > -100000 && by < 100000) {
-                const uint8_t *bits;
-                const ft_ent *e = ft_glyph(f, g, px64, sx, sy, (int)ph, &bits);
-                if (e) ft_blit(c, f, bits, e->w, e->h, (int)ix + e->l, (int)by + e->t, k);
+    for (;;) {
+        const char *le = s;
+        while (*le && *le != '\n') le++;
+        int ng = ft_shape(f, ch, nch, s, (int)(le - s), NULL);
+        for (int i = 0; i < ng; i++) {
+            const ft_gl *e = &f->sgl[i];
+            if (e->kind == 1) {
+                pen += 4 * (int64_t)ft_adv(f, sp), prev = -1;
+                continue;
             }
+            if (e->kind) continue;
+            int g = e->g, fi = e->fi;
+            if (fi == 0 && !e->rtl) {
+                if (prev >= 0) pen += ft_kern(f, prev, g);
+                prev = g;
+            } else
+                prev = -1;
+            if (draw && pen * 64 < ((int64_t)1 << 62) / (sx + 1) && pen * 64 > -(((int64_t)1 << 62) / (sx + 1))) {
+                int64_t gx = ox + (pen * 64 * sx >> 24), ix = ft_fdiv(gx, 256), ph = ((gx - ix * 256) + 32) >> 6;
+                if (ph == 4) ph = 0, ix++;
+                int64_t by = ft_fdiv(line0 + 128, 256);
+                if (ix > -100000 && ix < 100000 && by > -100000 && by < 100000) {
+                    goome_font *F = ch[fi];
+                    if (!fsx[fi]) ft_scales(F, px64, &fsx[fi], &fsy[fi]);
+                    const ft_cent *ce = F->color ? ft_cglyph(F, g, px64, fsx[fi], fsy[fi], argb) : NULL;
+                    if (ce) ft_cblit(c, ce->px, ce->w, ce->h, (int)ix + ce->l, (int)by + ce->t, k, argb >> 24);
+                    else {
+                        const uint8_t *bits;
+                        if (F != f) ft_colors(F, argb);
+                        const ft_ent *ge = ft_glyph(F, g, px64, fsx[fi], fsy[fi], (int)ph, &bits);
+                        if (ge) ft_blit(c, F, bits, ge->w, ge->h, (int)ix + ge->l, (int)by + ge->t, k);
+                    }
+                }
+            }
+            pen += e->adv;
         }
-        pen += ft_adv(f, g);
+        if (*le != '\n') break;
+        if (pen > best) best = pen;
+        pen = 0, prev = -1, (*lines)++;
+        line0 += lh;
+        s = le + 1;
     }
     if (pen > best) best = pen;
     return (double)best * size / f->upem;
@@ -1700,5 +2835,10 @@ double goome_text_line_height(goome_font *f, double size)
 #undef FT_ARENA
 #undef FT_SLOTS
 #undef FT_KC
+#undef FT_MAXMAP
+#undef FT_NFB
+#undef FT_CC
+#undef FT_NLIG
+#undef FT_REG
 #undef FT_TOL
 #endif

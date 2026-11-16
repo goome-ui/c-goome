@@ -15,6 +15,7 @@
 #define UI_MAXWIN 64
 #define UI_MAXHIT 256
 #define UI_MAXKEY 64
+#define UI_IME_KEY 0x7E000
 #define UI_MAXFR 16
 #define UI_MAXSCR 16
 #define UI_MAXCLIP 32
@@ -160,6 +161,8 @@ struct goome_ui {
     long now, last;
     double dt;
     int frame;
+    struct ui_ax_s *ax;
+    int ax_on;
 
     double mx, my, pressx, pressy;
     int down, got_pos;
@@ -243,6 +246,10 @@ struct goome_ui {
     char *undo;
     int undo_cap, undo_cur, undo_kind;
     uint32_t undo_id;
+    char *ime_buf, *ime_pre;
+    int ime_len, ime_cap, ime_at[UI_MAXKEY], ime_plen, ime_pcap, ime_pcur, ime_want, ime_on;
+    uint32_t ime_id;
+    goome_rect ime_rect, ime_sent;
 
     struct ui_ed_s *eds[UI_MAXED];
     goome_font *mono;
@@ -291,6 +298,37 @@ typedef struct ui_keep_s {
     double *v;
 } ui_keep;
 
+enum { UI_AXW = 1, UI_AXP, UI_AXT, UI_AXB, UI_AXA, UI_AXL, UI_AXG, UI_AXM };
+static int ui_ax_add(goome_ui *u, uint32_t id, ui_box b, int role, const char *s, int n, int states, int kind);
+static void ui_ax_push(goome_ui *u, int i, int kind);
+static void ui_ax_pop(goome_ui *u, int kind, const ui_box *b);
+static int ui_ax_do(goome_ui *u, uint32_t id, int verb);
+static int ui_ax_feed(goome_ui *u, const goome_event *e);
+static void ui_ax_begin(goome_ui *u);
+static void ui_ax_end(goome_ui *u);
+static void ui_ax_free(goome_ui *u);
+static void ui_ax_text(goome_ui *u, ui_box b, const char *s, int n, int role);
+static void ui_ax_val(goome_ui *u, int i, const char *s, int n);
+static void ui_ax_btn(goome_ui *u, uint32_t id, ui_box b, const char *s, int n);
+static void ui_ax_check(goome_ui *u, uint32_t id, ui_box b, const char *s, int n, int role, int on);
+static int ui_ax_slider(goome_ui *u, uint32_t id, ui_box b, const char *s, int n, double *v, double lo, double hi, const char *val);
+static int ui_ax_input(goome_ui *u, uint32_t id, char *buf, int cap, int *len, int flags);
+static void ui_ax_field(goome_ui *u, uint32_t id, ui_box b, const char *label, int n, const char *hint, const char *shown, int len, int cur, int flags);
+static int ui_ax_combo(goome_ui *u, uint32_t id, ui_box b, const char *s, int n, int *sel, const char *const *items, int count, int open);
+static void ui_ax_list(goome_ui *u, uint32_t id, ui_box b, int on);
+static void ui_ax_item(goome_ui *u, uint32_t id, ui_box b, const char *s, int sel, int role);
+static void ui_ax_tabs(goome_ui *u, uint32_t id, ui_box b, const char *s, int on);
+static void ui_ax_expander(goome_ui *u, uint32_t id, ui_box b, const char *s, int n, int role, int open, int push);
+static void ui_ax_progress(goome_ui *u, ui_box b, double frac, const char *s);
+static void ui_ax_window(goome_ui *u, uint32_t id, ui_box b, const char *t, int flags, int collapsed);
+static void ui_ax_menu(goome_ui *u, uint32_t id, ui_box b, const char *s, int n, int open, int push);
+static void ui_ax_menuitem(goome_ui *u, uint32_t id, ui_box b, const char *s, int n, const int *checked);
+static void ui_ax_pop_node(goome_ui *u, uint32_t id, int role, const char *s, int n, int ok);
+static int ui_ax_spin(goome_ui *u, uint32_t id, ui_box b, const char *s, int n, double *v, double lo, double hi, const char *fmt, int whole);
+static int ui_ax_color(goome_ui *u, uint32_t id, ui_box b, const char *s, int n, uint32_t *argb, int open);
+static int ui_ax_edit(goome_ui *u, uint32_t id, char *buf, int cap);
+static void ui_ax_custom(goome_ui *u, uint32_t id, ui_box b, int focusable, int *click);
+
 static double ui_floor(double v)
 {
     double t = (double)(long long)v;
@@ -301,21 +339,6 @@ static double ui_min(double a, double b) { return a < b ? a : b; }
 static double ui_max(double a, double b) { return a > b ? a : b; }
 static double ui_clamp(double v, double a, double b) { return v < a ? a : v > b ? b : v; }
 static double ui_abs(double v) { return v < 0 ? -v : v; }
-static double ui_ez(goome_ui *u, double t)
-{
-    t = ui_clamp(t, 0, 1);
-    double k = t - 1;
-    switch ((int)u->th.ease) {
-    case GOOME_EASE_LINEAR: return t;
-    case GOOME_EASE_OUT: return 1 - (1 - t) * (1 - t) * (1 - t);
-    case GOOME_EASE_IN_OUT: return t < 0.5 ? 4 * t * t * t : 1 + 4 * k * k * k;
-    case GOOME_EASE_BACK: return 1 + 2.70158 * k * k * k + 1.70158 * k * k;
-    case GOOME_EASE_CUSTOM:
-        if (u->cfg.ease) return u->cfg.ease(t, u->cfg.ease_user);
-        break;
-    }
-    return t * t * (3 - 2 * t);
-}
 static uint32_t ui_c(uint32_t c, uint32_t def) { return c ? c : def; }
 static int ui_bits(int m)
 {
@@ -344,6 +367,54 @@ static double ui_sin(double x)
     return x * (1 - x2 / 6 * (1 - x2 / 20 * (1 - x2 / 42 * (1 - x2 / 72 * (1 - x2 / 110)))));
 }
 static double ui_cos(double x) { return ui_sin(x + 1.57079632679489661923); }
+static double ui_exp(double x)
+{
+    int n = 0;
+    while ((x < -0.125 || x > 0.125) && n < 60) x /= 2, n++;
+    double r = 1 + x * (1 + x / 2 * (1 + x / 3 * (1 + x / 4 * (1 + x / 5 * (1 + x / 6 * (1 + x / 7))))));
+    while (n--) r *= r;
+    return r;
+}
+static double ui_sqrt(double v)
+{
+    if (v <= 0) return 0;
+    double r = v > 1 ? v : 1;
+    for (int i = 0; i < 40; i++) {
+        double n = (r + v / r) / 2;
+        if (n >= r) break;
+        r = n;
+    }
+    return r;
+}
+
+double goome_ease(int ease, double t)
+{
+    t = ui_clamp(t, 0, 1);
+    double k = t - 1;
+    switch (ease) {
+    case GOOME_EASE_LINEAR: return t;
+    case GOOME_EASE_IN: return t * t * t;
+    case GOOME_EASE_OUT: return 1 - (1 - t) * (1 - t) * (1 - t);
+    case GOOME_EASE_IN_OUT: return t < 0.5 ? 4 * t * t * t : 1 + 4 * k * k * k;
+    case GOOME_EASE_BACK: return 1 + 2.70158 * k * k * k + 1.70158 * k * k;
+    case GOOME_EASE_SPRING:
+        if (t <= 0 || t >= 1) return t;
+        return 1 - ui_exp(-7 * t) * (ui_cos(12 * t) + 7.0 / 12 * ui_sin(12 * t));
+    case GOOME_EASE_BOUNCE:
+        if (t >= 1) return 1;
+        if (t < 1 / 2.75) return 7.5625 * t * t;
+        if (t < 2 / 2.75) return t -= 1.5 / 2.75, 7.5625 * t * t + 0.75;
+        if (t < 2.5 / 2.75) return t -= 2.25 / 2.75, 7.5625 * t * t + 0.9375;
+        return t -= 2.625 / 2.75, 7.5625 * t * t + 0.984375;
+    }
+    return t * t * (3 - 2 * t);
+}
+static double ui_ease(goome_ui *u, int e, double t)
+{
+    if (e == GOOME_EASE_CUSTOM && u->cfg.ease) return u->cfg.ease(ui_clamp(t, 0, 1), u->cfg.ease_user);
+    return goome_ease(e, t);
+}
+static double ui_ez(goome_ui *u, double t) { return ui_ease(u, (int)u->th.ease, t); }
 static int ui_in(ui_box b, double x, double y) { return x >= b.x && y >= b.y && x < b.x + b.w && y < b.y + b.h; }
 static ui_box ui_bx(double x, double y, double w, double h)
 {
@@ -859,6 +930,7 @@ static int ui_button_logic(goome_ui *u, uint32_t id, ui_box b, int *hov, int *he
     if (h && u->pressed && !u->active) u->active = id;
     int click = h && u->released && u->active == id;
     if (u->nav_act && id && u->focus == id) click = 1, u->nav_act = 0;
+    if (ui_ax_do(u, id, 'p')) click = 1;
     if (hov) *hov = h;
     if (held) *held = u->active == id && (u->down || u->pressed);
     return click;
@@ -898,6 +970,7 @@ static int ui_nav(goome_ui *u, uint32_t id, ui_box b, goome_radii r, int kind, i
         return 0;
     }
     if (u->want_focus) u->want_focus = 0, ui_focus_to(u, id, ui_plain(kind), kind), u->tab_came = !ui_plain(kind);
+    if (ui_ax_do(u, id, 'f')) ui_focus_to(u, id, 1, kind), u->tab_came = !ui_plain(kind);
     if (u->tab_req > 0 && u->tab_take) {
         u->tab_req = 0, u->tab_take = 0;
         if (!u->rad_only) u->tab_new = id, u->tab_kind = kind;
@@ -944,6 +1017,7 @@ goome_ui *goome_ui_new(goome *g)
     u->mb_want = -1;
     u->auto_grab = GOOME_WANT_MOUSE | GOOME_WANT_KEYBOARD;
     goome_ui_config_default(&u->cfg);
+    goome_ui_a11y(u, goome_mode(g) == GOOME_MODE_WINDOW);
     return u;
 }
 
@@ -959,11 +1033,14 @@ void goome_ui_free(goome_ui *u)
     for (int i = 0; i < UI_MAXPOP; i++) ui_list_free(&u->plist[i]);
     for (int i = 0; i < UI_NBLK; i++) free(u->blk[i]);
     free(u->undo);
+    if (u->ime_on) goome_text_input(u->g, 0, NULL);
+    free(u->ime_buf), free(u->ime_pre);
     free(u->idx);
     ui_ed_free_all(u);
     free(u->dd_data);
     free(u->sty);
     free(u->lay_px);
+    ui_ax_free(u);
     for (int i = 0; i < u->nkeep; i++) free(u->keeps[i].v);
     free(u->keeps);
     goome_font_free(u->mono);
@@ -1131,10 +1208,15 @@ static void ui_keys_pre(goome_ui *u)
     }
 }
 
+static int ui_ime_feed(goome_ui *u, const goome_event *e);
+static void ui_ime_sync(goome_ui *u);
+
 int goome_ui_feed(goome_ui *u, const goome_event *e)
 {
     if (!u || !e) return 0;
     switch (e->type) {
+    case GOOME_TEXT:
+    case GOOME_PREEDIT: return ui_ime_feed(u, e);
     case GOOME_MOTION:
         u->mx = e->x, u->my = e->y, u->got_pos = 1;
         return u->active || ui_over(u, e->x, e->y);
@@ -1169,6 +1251,7 @@ int goome_ui_feed(goome_ui *u, const goome_event *e)
         if (u->unfocused && u->grab) u->down = 0, u->p_released = 1, ui_grab_set(u, 0);
         return 0;
     case GOOME_MONITORS: u->nmon = goome_monitors(u->g, u->mons, GM_MAX_MON); return 0;
+    case GOOME_CONTROL: return ui_ax_feed(u, e);
     }
     return 0;
 }
@@ -1287,6 +1370,7 @@ goome_canvas *goome_ui_begin(goome_ui *u, int mon)
     u->fr[0].box = ui_bx(a.x, a.y, a.w, a.h);
     u->page_bottom = a.y + a.h;
     u->nfr = 1;
+    ui_ax_begin(u);
     return c;
 }
 
@@ -1365,6 +1449,7 @@ void goome_ui_end(goome_ui *u)
     if (u->tab_new) ui_focus_to(u, u->tab_new, 1, u->tab_kind), u->tab_came = 1;
     u->tab_new = 0, u->tab_req = 0, u->rad_only = 0, u->want_focus = 0;
     if (goome_mode(u->g) == GOOME_MODE_OVERLAY) ui_keyboard(u, u->focus || u->npop);
+    ui_ime_sync(u);
     if (u->popup && !u->pop_seen) u->popup = 0;
     ui_grab_set(u, u->down && u->grab_frame > 0 && u->frame - u->grab_frame < (u->nmon > 1 ? u->nmon : 1) && (u->auto_grab & GOOME_WANT_MOUSE));
     if (!u->down) u->active = 0;
@@ -1400,6 +1485,7 @@ void goome_ui_end(goome_ui *u)
     ui_play(u, &u->tip);
     if (u->cur_want != u->cur_set) u->cur_set = u->cur_want, goome_cursor(u->g, u->cur_want);
     for (int i = 0; i < u->nextra && u->nhits < UI_MAXHIT; i++) u->hits[u->nhits++] = u->extra[i];
+    ui_ax_end(u);
     goome_end(u->g, u->c, u->hits, u->nhits);
     u->anim = u->anim_next;
     u->nkeys = 0;
@@ -1585,6 +1671,7 @@ int goome_ui_window(goome_ui *u, const char *title, double *x, double *y, double
     double vh = ui_round(tbar + (full - tbar) * op);
     ui_box box = ui_bx(*x, *y, ww, vh);
     f->box = box;
+    ui_ax_window(u, id, box, t, flags, wn->collapsed);
     goome_radii rr = ui_tr(u, th->radius);
 
     f->bg = ui_n(u);
@@ -1621,6 +1708,7 @@ int goome_ui_window(goome_ui *u, const char *title, double *x, double *y, double
             ui_box xb = ui_bx(right - xs, ui_round(cy - xs / 2), xs, xs);
             int hov, held;
             if (ui_button_logic(u, xid, xb, &hov, &held)) *open = 0;
+            ui_ax_btn(u, xid, xb, "Close", 5);
             ui_st *s = ui_get(u, xid, NULL);
             double k = ui_anim(u, s, 0, hov || held);
             double ccx = xb.x + xs / 2, d = 3.6 * u->em;
@@ -1640,6 +1728,7 @@ int goome_ui_window(goome_ui *u, const char *title, double *x, double *y, double
     }
 
     if (coll && wn->open <= 0) {
+        ui_ax_pop(u, UI_AXW, NULL);
         ui_rline(u, box, rr, th->border_width, th->border);
         wn->box = box;
         ui_leave(u, &f->sv);
@@ -1707,6 +1796,7 @@ void goome_ui_window_end(goome_ui *u)
     }
     if (!th->skin_panel.bm) ui_rline(u, box, ui_tr(u, th->radius), th->border_width, th->border);
     wn->box = box;
+    ui_ax_pop(u, UI_AXW, &box);
     ui_leave(u, &f->sv);
     u->nid = f->nid_out;
     u->nfr--;
@@ -1757,6 +1847,7 @@ void goome_ui_label(goome_ui *u, const char *fmt, ...)
     double tw = ui_tw(u, s, n, 0);
     ui_box b = ui_item(u, al == GOOME_ALIGN_LEFT ? tw : 0, u->lh);
     ui_hover(u, ui_auto(u), b);
+    ui_ax_text(u, b, s, n, GOOME_ROLE_TEXT);
     ui_text_mid(u, ui_ax(al, b.x, b.w, tw, 0), b.y + b.h / 2, s, n, 0, u->th.text);
 }
 
@@ -1772,6 +1863,7 @@ void goome_ui_heading(goome_ui *u, const char *text)
     double tw = ui_tw(u, text, n, sz);
     ui_box b = ui_item(u, al == GOOME_ALIGN_LEFT ? tw : 0, goome_text_line_height(u->th.font, sz));
     ui_hover(u, ui_auto(u), b);
+    ui_ax_text(u, b, text, n, GOOME_ROLE_TEXT);
     ui_text_mid(u, ui_ax(al, b.x, b.w, tw, 0), b.y + b.h / 2, text, n, sz, u->th.text);
     u->th.font = keep;
 }
@@ -1789,6 +1881,71 @@ static int ui_u8_next(const char *s, int i, int len)
     i++;
     while (i < len && ((unsigned char)s[i] & 0xC0) == 0x80) i++;
     return i;
+}
+
+static int ui_bd(goome_ui *u, const char *s, int n) { return u->th.font && n > 0 ? gm_text_rtl(u->th.font, s, n) : 0; }
+
+static double ui_bd_x(const gm_tc *b, int nb, int i)
+{
+    if (nb <= 0) return 0;
+    for (int k = 0; k < nb; k++)
+        if (b[k].lo < i && i <= b[k].hi) return b[k].rtl ? b[k].x0 : b[k].x1;
+    for (int k = 0; k < nb; k++)
+        if (b[k].lo >= i) return b[k].rtl ? b[k].x1 : b[k].x0;
+    return b[nb - 1].rtl ? b[nb - 1].x0 : b[nb - 1].x1;
+}
+
+static int ui_bd_hit(const gm_tc *b, int nb, double x)
+{
+    if (nb <= 0) return 0;
+    int kl = 0, kr = 0;
+    for (int k = 0; k < nb; k++) {
+        if (x >= b[k].x0 && x < b[k].x1) return ((x < (b[k].x0 + b[k].x1) / 2) != (b[k].rtl != 0)) ? b[k].lo : b[k].hi;
+        if (b[k].x0 < b[kl].x0) kl = k;
+        if (b[k].x1 > b[kr].x1) kr = k;
+    }
+    if (x < b[kl].x0) return b[kl].rtl ? b[kl].hi : b[kl].lo;
+    return b[kr].rtl ? b[kr].lo : b[kr].hi;
+}
+
+static int ui_bd_move(const gm_tc *b, int nb, int i, int right)
+{
+    double cx = ui_bd_x(b, nb, i), bx = 0;
+    int best = -1;
+    for (int k = -1; k < nb; k++) {
+        int c = k < 0 ? 0 : b[k].hi;
+        double x = ui_bd_x(b, nb, c);
+        if (right ? x > cx + 0.01 && (best < 0 || x < bx) : x < cx - 0.01 && (best < 0 || x > bx)) best = c, bx = x;
+    }
+    return best;
+}
+
+static int ui_bd_lay(goome_ui *u, const char *s, int n, gm_tc **b) { return gm_text_layout(u->th.font, u->size, s, n, b); }
+
+static void ui_bd_sel(goome_ui *u, const gm_tc *b, int nb, int lo, int hi, double ox, double y, double h, double r, uint32_t col, double extra)
+{
+    double *sp = malloc(sizeof(double) * 2 * (size_t)(nb + 1));
+    int n = 0;
+    if (!sp) return;
+    for (int k = 0; k < nb; k++) {
+        if (b[k].lo < lo || b[k].hi > hi || b[k].x1 <= b[k].x0) continue;
+        int j = n++;
+        while (j > 0 && sp[(j - 1) * 2] > b[k].x0) sp[j * 2] = sp[(j - 1) * 2], sp[j * 2 + 1] = sp[(j - 1) * 2 + 1], j--;
+        sp[j * 2] = b[k].x0, sp[j * 2 + 1] = b[k].x1;
+    }
+    if (extra > 0) {
+        double e = nb ? b[0].x1 : 0;
+        for (int k = 0; k < nb; k++) e = ui_max(e, b[k].x1);
+        sp[n * 2] = e, sp[n * 2 + 1] = e + extra, n++;
+    }
+    for (int k = 0; k < n;) {
+        double a = sp[k * 2], z = sp[k * 2 + 1];
+        int j = k + 1;
+        while (j < n && sp[j * 2] <= z + 0.01) z = ui_max(z, sp[j * 2 + 1]), j++;
+        ui_rect(u, ui_bx(ox + a, y, ui_max(1, z - a), h), r, col);
+        k = j;
+    }
+    free(sp);
 }
 
 static int ui_wrap(goome_ui *u, const char *s, double w, int *st, int *ln, int max)
@@ -1836,6 +1993,7 @@ void goome_ui_wrapped(goome_ui *u, const char *text)
     int n = ui_wrap(u, text, w, st, ln, 256);
     ui_box b = ui_item(u, w, ui_max(1, n) * u->lh);
     ui_hover(u, ui_auto(u), b);
+    ui_ax_text(u, b, text, (int)strlen(text), GOOME_ROLE_TEXT);
     int al = ui_al(u, GOOME_ALIGN_LEFT);
     for (int i = 0; i < n; i++) ui_text_mid(u, al == GOOME_ALIGN_LEFT ? b.x : ui_ax(al, b.x, b.w, ui_tw(u, text + st[i], ln[i], 0), 0), b.y + u->lh * (i + 0.5), text + st[i], ln[i], 0, u->th.text_dim);
 }
@@ -1850,6 +2008,7 @@ int goome_ui_button(goome_ui *u, const char *label)
     uint32_t id = ui_id(u, label);
     ui_nav(u, id, b, ui_tr(u, th->radius), UN_PLAIN, NULL, 0);
     int hov, held, click = ui_button_logic(u, id, b, &hov, &held);
+    ui_ax_btn(u, id, b, label, n);
     ui_st *s = ui_get(u, id, NULL);
     uint32_t bg = ui_btn_bg(u, s, hov, held);
     if (!ui_skin(u, &th->skin_button, b, ui_ez(u, s->v[0]), ui_ez(u, s->v[1]))) {
@@ -1885,6 +2044,7 @@ void goome_ui_image(goome_ui *u, const goome_bitmap *b, double w, double h, doub
     ui_box sz = ui_fit(b, w, h, ui_avail(u));
     ui_box d = ui_item(u, sz.w, sz.h);
     ui_hover(u, ui_auto(u), d);
+    ui_ax_text(u, d, NULL, 0, GOOME_ROLE_IMAGE);
     ui_img_box(u, b, d, goome_radius(radius));
 }
 
@@ -1897,6 +2057,7 @@ int goome_ui_image_button(goome_ui *u, const char *id, const goome_bitmap *b, do
     uint32_t hid = ui_id(u, id);
     ui_nav(u, hid, d, ui_tr(u, th->radius), UN_PLAIN, NULL, 0);
     int hov, held, click = ui_button_logic(u, hid, d, &hov, &held);
+    ui_ax_btn(u, hid, d, id, ui_shown(id));
     ui_st *s = ui_get(u, hid, NULL);
     goome_radii rr = ui_tr(u, th->radius);
     ui_rrect(u, d, rr, ui_btn_bg(u, s, hov, held));
@@ -1918,6 +2079,7 @@ int goome_ui_checkbox(goome_ui *u, const char *label, int *v)
     ui_nav(u, id, b, goome_radius(cr + 1), UN_PLAIN, NULL, 0);
     int hov, held, ch = 0;
     if (ui_button_logic(u, id, b, &hov, &held)) *v = !*v, ch = 1;
+    ui_ax_check(u, id, b, label, n, GOOME_ROLE_CHECKBOX, *v);
     ui_st *s = ui_get(u, id, NULL);
     double h = ui_anim(u, s, 0, hov || held), k = ui_anim(u, s, 2, *v);
     double cy = b.y + b.h / 2;
@@ -1951,6 +2113,7 @@ int goome_ui_toggle(goome_ui *u, const char *label, int *v)
     ui_nav(u, id, b, goome_radius(sh / 2), UN_PLAIN, NULL, 0);
     int hov, held, ch = 0;
     if (ui_button_logic(u, id, b, &hov, &held)) *v = !*v, ch = 1;
+    ui_ax_check(u, id, b, label, n, GOOME_ROLE_CHECKBOX, *v);
     ui_st *s = ui_get(u, id, NULL);
     double h = ui_anim(u, s, 0, hov || held), p = ui_anim(u, s, 1, held), k = ui_anim(u, s, 2, *v);
     double cy = b.y + b.h / 2;
@@ -1987,6 +2150,7 @@ int goome_ui_radio(goome_ui *u, const char *label, int *v, int value)
     uint32_t id = ui_id(u, label);
     int hov, held, ch = (ui_nav(u, id, b, goome_radius(sz / 2), UN_RADIO, v, value) & 2) != 0;
     if (ui_button_logic(u, id, b, &hov, &held) && *v != value) *v = value, ch = 1;
+    ui_ax_check(u, id, b, label, n, GOOME_ROLE_RADIO, *v == value);
     ui_st *s = ui_get(u, id, NULL);
     double h = ui_anim(u, s, 0, hov || held), k = ui_anim(u, s, 2, *v == value);
     double cy = b.y + b.h / 2, cx = b.x + sz / 2;
@@ -2031,6 +2195,7 @@ static int ui_slide(goome_ui *u, uint32_t id, const char *label, double *v, doub
     char val[64];
     if (whole) snprintf(val, sizeof(val), "%d", (int)*v);
     else snprintf(val, sizeof(val), fmt ? fmt : "%.2f", *v);
+    if (ui_ax_slider(u, id, b, label, n, v, lo, hi, val)) ch = 1;
     double cur = span != 0 ? ui_clamp((*v - lo) / span, 0, 1) : 0;
     int fresh;
     ui_st *s = ui_get(u, id, &fresh);
@@ -2104,8 +2269,36 @@ static double ui_iw(goome_ui *u, const char *buf, int i, const char *disp, int m
     return ui_tw(u, disp, n < (int)strlen(disp) ? n : (int)strlen(disp), 0);
 }
 
+static double ui_cx(goome_ui *u, const char *buf, int len, int i, const char *disp, int ml)
+{
+    if (disp || !ui_bd(u, buf, len)) return ui_iw(u, buf, i, disp, ml);
+    gm_tc *b;
+    int nb = ui_bd_lay(u, buf, len, &b);
+    double x = ui_bd_x(b, nb, i);
+    free(b);
+    return x;
+}
+
+static int ui_ic_step(goome_ui *u, const char *buf, int len, int cur, int right, const char *disp)
+{
+    if (disp) return right ? ui_u8_next(buf, cur, len) : ui_u8_prev(buf, cur);
+    if (ui_bd(u, buf, len)) {
+        gm_tc *b;
+        int nb = ui_bd_lay(u, buf, len, &b), to = ui_bd_move(b, nb, cur, right);
+        free(b);
+        return to < 0 ? cur : to;
+    }
+    return right ? gm_text_next(buf, cur, len) : gm_text_prev(buf, cur);
+}
+
 static int ui_caret_at(goome_ui *u, const char *buf, int len, double want, const char *disp, int ml)
 {
+    if (!disp && ui_bd(u, buf, len)) {
+        gm_tc *b;
+        int nb = ui_bd_lay(u, buf, len, &b), at = ui_bd_hit(b, nb, want);
+        free(b);
+        return at;
+    }
     double best = 1e9;
     int cur = 0;
     for (int i = 0; i <= len; i = ui_u8_next(buf, i, len)) {
@@ -2165,6 +2358,106 @@ static int ui_num_ok(const char *t)
     return 1;
 }
 
+static int ui_ime_keep(char **b, int *cap, int at, const char *s, int n)
+{
+    if (at + n + 1 > *cap) {
+        int c = (at + n + 1) * 2;
+        char *m = realloc(*b, (size_t)c);
+        if (!m) return 0;
+        *b = m, *cap = c;
+    }
+    memcpy(*b + at, s, (size_t)n);
+    (*b)[at + n] = 0;
+    return 1;
+}
+
+static int ui_ime_feed(goome_ui *u, const goome_event *e)
+{
+    const char *full = goome_event_text(u->g), *s = e->msg;
+    size_t ml = strlen(e->msg);
+    if (ml >= sizeof(e->msg) - 4 && !strncmp(full, e->msg, ml)) s = full;
+    int n = (int)strlen(s);
+    if (e->type == GOOME_PREEDIT) {
+        if (!ui_ime_keep(&u->ime_pre, &u->ime_pcap, 0, s, n)) return 0;
+        u->ime_plen = n, u->ime_pcur = e->id < 0 ? 0 : e->id > n ? n : e->id;
+        return u->focus != 0;
+    }
+    if (!u->focus || u->nkeys >= UI_MAXKEY || !n) return u->focus != 0;
+    if (!u->nkeys) u->ime_len = 0;
+    if (!ui_ime_keep(&u->ime_buf, &u->ime_cap, u->ime_len, s, n)) return 1;
+    u->ime_at[u->nkeys] = u->ime_len, u->ime_len += n + 1;
+    ui_key *k = &u->keys[u->nkeys++];
+    k->key = UI_IME_KEY, k->mods = 0, k->text[0] = 0;
+    return 1;
+}
+
+static char *ui_ime_take(goome_ui *u, int k, int lines, int num, int *n)
+{
+    const char *s = u->ime_buf + u->ime_at[k];
+    int len = (int)strlen(s), w = 0;
+    char *t = malloc((size_t)len + 1);
+    *n = 0;
+    if (!t) return NULL;
+    for (int i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)s[i];
+        char one[2] = {(char)c, 0};
+        if (c == '\r') continue;
+        if (c == '\n' || c == '\t') c = lines && c == '\n' ? '\n' : ' ';
+        else if (c < 32 || c == 127) continue;
+        if (num && !ui_num_ok(one)) continue;
+        t[w++] = (char)c;
+    }
+    t[w] = 0;
+    *n = w;
+    return t;
+}
+
+static int ui_ime_commit(goome_ui *u, int k, uint32_t id, char *buf, int *len, int cap, int *cur, int *anc, int num)
+{
+    int n, ch = 0, lo = *anc < *cur ? *anc : *cur, hi = *anc < *cur ? *cur : *anc;
+    char *t = ui_ime_take(u, k, 0, num, &n);
+    if (t && n > 0) {
+        ui_undo_keep(u, id, buf, *len, *cur, 3);
+        *cur = ui_del(buf, len, lo, hi);
+        *cur += ui_ins(buf, len, cap, *cur, t, n);
+        *anc = *cur, ch = 1;
+        u->undo_kind = 0;
+    }
+    free(t);
+    return ch;
+}
+
+static void ui_ime_show(goome_ui *u, uint32_t id, double x, double y, double h)
+{
+    const goome_theme *th = &u->th;
+    if (u->ime_id != id) u->ime_id = id, u->ime_plen = 0;
+    u->ime_want = 1;
+    double w = 0;
+    if (u->ime_plen > 0) {
+        double lh = goome_text_line_height(th->font, u->size), ty = ui_round(y + (h - lh) / 2);
+        double cx = ui_tw(u, u->ime_pre, u->ime_pcur, 0);
+        w = ui_tw(u, u->ime_pre, u->ime_plen, 0);
+        ui_rect(u, ui_bx(x - 1, y, w + 3, h), 2, th->input_bg | 0xFF000000u);
+        ui_text(u, x, ty, u->ime_pre, u->ime_plen, 0, th->text);
+        ui_rect(u, ui_bx(x, ty + lh - 1, w, 1), 0, th->text);
+        ui_rect(u, ui_bx(x + cx, y + 1, th->caret_w > 0 ? th->caret_w : 1.5, h - 2), 0, ui_c(th->caret, th->accent));
+    }
+    u->ime_rect = (goome_rect){(int)ui_floor(x), (int)ui_floor(y), (int)ui_floor(w + 1.999), (int)ui_floor(h + 0.999)};
+}
+
+static void ui_ime_sync(goome_ui *u)
+{
+    int want = u->ime_want && u->focus && u->focus == u->ime_id;
+    u->ime_want = 0;
+    if (want && (!u->ime_on || memcmp(&u->ime_rect, &u->ime_sent, sizeof(goome_rect)))) {
+        goome_text_input(u->g, 1, &u->ime_rect);
+        u->ime_on = 1, u->ime_sent = u->ime_rect;
+    } else if (!want && u->ime_on) {
+        goome_text_input(u->g, 0, NULL);
+        u->ime_on = 0, u->ime_plen = 0, u->ime_id = 0;
+    }
+}
+
 int goome_ui_input(goome_ui *u, const char *label, char *buf, int cap) { return goome_ui_input_ex(u, label, buf, cap, 0, NULL); }
 
 int goome_ui_input_ex(goome_ui *u, const char *label, char *buf, int cap, int flags, const char *hint)
@@ -2188,6 +2481,7 @@ int goome_ui_input_ex(goome_ui *u, const char *label, char *buf, int cap, int fl
     int ml = 0;
     if (pw) ml = ui_mask(u, buf, len, disp, (int)sizeof(disp)), dp = disp;
     ui_nav(u, id, b, ui_tr(u, th->radius), UN_INPUT, NULL, 0);
+    if (ui_ax_input(u, id, buf, cap, &len, flags)) cur = anc = len, ch = 1;
     if (u->focus == id && u->tab_came) {
         if (flags & GOOME_INPUT_NO_SELECT_ON_FOCUS) anc = cur = len;
         else anc = 0, cur = len;
@@ -2223,6 +2517,11 @@ int goome_ui_input_ex(goome_ui *u, const char *label, char *buf, int cap, int fl
             ui_key *e = &u->keys[k];
             int key = e->key, m = e->mods, sh = m & GOOME_SHIFT, act = ui_act(u, key, m);
             int lo = anc < cur ? anc : cur, hi = anc < cur ? cur : anc, has = lo != hi;
+            if (key == UI_IME_KEY) {
+                if (!ro) ch |= ui_ime_commit(u, k, id, buf, &len, cap, &cur, &anc, num);
+                s->v[3] = (double)u->now;
+                continue;
+            }
             if (!key && !e->text[0]) continue;
             s->v[3] = (double)u->now;
             if (ro && (act == GOOME_ACT_PASTE || act == GOOME_ACT_UNDO || act == GOOME_ACT_REDO || act == GOOME_ACT_DEL_WORD_LEFT || act == GOOME_ACT_DEL_WORD_RIGHT)) continue;
@@ -2286,8 +2585,8 @@ int goome_ui_input_ex(goome_ui *u, const char *label, char *buf, int cap, int fl
             } else if (act == GOOME_ACT_WORD_LEFT || act == GOOME_ACT_WORD_RIGHT || (act < 0 && (key == GOOME_K_LEFT || key == GOOME_K_RIGHT))) {
                 int r = act == GOOME_ACT_WORD_RIGHT || (act < 0 && key == GOOME_K_RIGHT), wd = act >= 0;
                 if (has && !sh) cur = r ? hi : lo;
-                else if (r) cur = wd ? (pw ? len : ui_word_right(buf, cur, len)) : ui_u8_next(buf, cur, len);
-                else cur = wd ? (pw ? 0 : ui_word_left(buf, cur)) : ui_u8_prev(buf, cur);
+                else if (r) cur = wd ? (pw ? len : ui_word_right(buf, cur, len)) : ui_ic_step(u, buf, len, cur, 1, dp);
+                else cur = wd ? (pw ? 0 : ui_word_left(buf, cur)) : ui_ic_step(u, buf, len, cur, 0, dp);
                 if (!sh) anc = cur;
                 u->undo_kind = 0;
             } else if (act == GOOME_ACT_DOC_START || act == GOOME_ACT_DOC_END || key == GOOME_K_HOME || key == GOOME_K_UP || key == GOOME_K_END || key == GOOME_K_DOWN) {
@@ -2313,7 +2612,7 @@ int goome_ui_input_ex(goome_ui *u, const char *label, char *buf, int cap, int fl
     int focused = u->focus == id;
     double h = ui_anim(u, s, 0, hov), f = ui_anim_ms(u, s, 1, focused, th->anim_ms);
     if (pw) ui_mask(u, buf, len, disp, (int)sizeof(disp));
-    double cx = ui_iw(u, buf, cur, dp, ml);
+    double cx = ui_cx(u, buf, len, cur, dp, ml);
     if (cx - s->v[2] > iw - 2) s->v[2] = cx - iw + 2;
     if (cx - s->v[2] < 0) s->v[2] = cx;
     if (!focused && s->v[2] > 0 && ui_iw(u, buf, len, dp, ml) <= iw) s->v[2] = 0;
@@ -2326,16 +2625,25 @@ int goome_ui_input_ex(goome_ui *u, const char *label, char *buf, int cap, int fl
     double x = ui_round(tx - s->v[2]);
     if (focused && anc != cur) {
         int lo = anc < cur ? anc : cur, hi = anc < cur ? cur : anc;
-        double x0 = ui_iw(u, buf, lo, dp, ml), x1 = ui_iw(u, buf, hi, dp, ml);
-        ui_rect(u, ui_bx(x + x0, b.y + b.h / 2 - u->lh / 2, x1 - x0, u->lh), 3, ui_c(th->select, ui_fade(th->accent, 0.32)));
+        if (!dp && ui_bd(u, buf, len)) {
+            gm_tc *bx;
+            int nb = ui_bd_lay(u, buf, len, &bx);
+            ui_bd_sel(u, bx, nb, lo, hi, x, b.y + b.h / 2 - u->lh / 2, u->lh, 3, ui_c(th->select, ui_fade(th->accent, 0.32)), 0);
+            free(bx);
+        } else {
+            double x0 = ui_iw(u, buf, lo, dp, ml), x1 = ui_iw(u, buf, hi, dp, ml);
+            ui_rect(u, ui_bx(x + x0, b.y + b.h / 2 - u->lh / 2, x1 - x0, u->lh), 3, ui_c(th->select, ui_fade(th->accent, 0.32)));
+        }
     }
     if (!len && !focused && hint && *hint) ui_text_mid(u, x, b.y + b.h / 2, hint, (int)strlen(hint), 0, th->text_dim);
     else ui_text_mid(u, x, b.y + b.h / 2, dp ? dp : buf, dp ? (int)strlen(dp) : len, 0, th->text);
     if (focused) {
         long t = u->now - (long)s->v[3], bl = u->cfg.blink_ms;
         if (bl <= 0 || (t / bl) % 2 == 0) ui_rect(u, ui_bx(x + cx, b.y + b.h / 2 - u->lh / 2 + 1, th->caret_w > 0 ? th->caret_w : 1.5, u->lh - 2), 0, ui_c(th->caret, th->accent));
+        if (!pw && !ro) ui_ime_show(u, id, x + ui_cx(u, buf, len, anc < cur ? anc : cur, NULL, 0), b.y + b.h / 2 - u->lh / 2, u->lh);
     }
     ui_clip_pop(u);
+    ui_ax_field(u, id, b, label, n, hint, dp ? dp : buf, dp ? (int)strlen(dp) : len, dp ? ml * gm_ax_chars(buf, cur) : cur, flags);
     return enter ? 2 : ch;
 }
 
@@ -2394,6 +2702,7 @@ int goome_ui_combo(goome_ui *u, const char *label, int *sel, const char *const *
         else if (u->pop_closed != id && n > 0) u->popup = id, u->pop_kind = UI_POP_COMBO, s->v[4] = 0, s->v[2] = 0;
     }
     int open = u->popup == id;
+    if (ui_ax_combo(u, id, b, label, ln, sel, items, n, open)) ch = 1;
     goome_radii rr = ui_tr(u, th->radius);
     ui_rrect(u, b, rr, ui_btn_bg(u, s, hov || open, held));
     double h = ui_ez(u, s->v[0]), k = ui_anim_ms(u, s, 4, open, ui_ms(u, th->popup_ms));
@@ -2423,8 +2732,10 @@ int goome_ui_combo(goome_ui *u, const char *label, int *sel, const char *const *
     if (u->wheel && u->hover_layer == UI_POPUP && ui_in(p, u->mx, u->my)) s->v[2] = ui_clamp(s->v[2] + u->wheel * rh * (u->cfg.scroll_lines / 3), 0, maxo), u->wheel = 0;
     s->v[2] = ui_clamp(s->v[2], 0, maxo);
     ui_clip_push(u, ui_bx(pv.x + 1, pv.y + 1, pv.w - 2, pv.h - 2));
+    ui_ax_list(u, id, pv, 1);
     for (int i = 0; i < n; i++) {
         ui_box r = ui_bx(pv.x + 4, pv.y + 4 + i * rh - s->v[2], pv.w - 8, rh);
+        ui_ax_item(u, ui_hashi(id, (uint32_t)i + 100), r, items[i], i == *sel, GOOME_ROLE_ITEM);
         if (r.y + r.h < pv.y || r.y > pv.y + pv.h) continue;
         uint32_t iid = ui_hashi(id, (uint32_t)i + 100);
         int ih, iheld;
@@ -2452,6 +2763,7 @@ int goome_ui_combo(goome_ui *u, const char *label, int *sel, const char *const *
         ui_box tk = ui_bx(pv.x + pv.w - (th->scroll_w + 3), pv.y + 4 + (tr - tht) * s->v[2] / maxo, th->scroll_w, tht);
         if (!ui_skin(u, &th->skin_scrollbar, tk, 0, 0)) ui_rect(u, tk, th->scroll_w / 2, ui_fade(th->text, 0.25));
     }
+    ui_ax_list(u, id, pv, 0);
     ui_clip_pop(u);
     ui_leave(u, &sv);
     return ch;
@@ -2466,6 +2778,7 @@ int goome_ui_selectable(goome_ui *u, const char *label, int selected)
     uint32_t id = ui_id(u, label);
     ui_nav(u, id, b, ui_tr(u, ui_max(0, th->radius - 3)), UN_PLAIN, NULL, 0);
     int hov, held, click = ui_button_logic(u, id, b, &hov, &held);
+    ui_ax_item(u, id, b, label, selected, GOOME_ROLE_ITEM);
     ui_st *s = ui_get(u, id, NULL);
     double h = ui_anim(u, s, 0, hov || held), k = ui_anim(u, s, 2, selected);
     goome_radii r = ui_tr(u, ui_max(0, th->radius - 3));
@@ -2510,8 +2823,10 @@ int goome_ui_tabs(goome_ui *u, const char *id, const char *const *names, int n, 
         ui_shadow(u, ui_bx(pill.x, pill.y + 1, pill.w, pill.h), u->rad_on ? ui_rmid(ui_tr(u, th->radius - 3)) : th->radius - 3, 6, 0x30000000);
         ui_rrect(u, pill, ui_tr(u, ui_max(0, th->radius - 3)), th->accent);
     }
+    ui_ax_tabs(u, tid, b, id, 1);
     for (int i = 0; i < n; i++) {
         ui_box t = ui_bx(b.x + 3 + i * tw, b.y + 3, tw, b.h - 6);
+        ui_ax_item(u, ui_hashi(tid, (uint32_t)i + 1), t, names[i], i == *sel, GOOME_ROLE_TAB);
         ui_st *is = ui_get(u, ui_hashi(tid, (uint32_t)i + 1), NULL);
         double over = ui_clamp(1 - ui_abs(t.x - pill.x) / tw, 0, 1);
         uint32_t c = ui_mix(ui_mix(th->text_dim, th->text, ui_ez(u, is->v[0])), th->accent_text, over);
@@ -2523,6 +2838,7 @@ int goome_ui_tabs(goome_ui *u, const char *id, const char *const *names, int n, 
         ui_text_mid(u, al ? ui_ax(al, t.x, t.w, w, 10) : ui_round(t.x + (t.w - w) / 2), t.y + t.h / 2, nm, ln, 0, c);
         ui_clip_pop(u);
     }
+    ui_ax_tabs(u, tid, b, id, 0);
     u->last_id = tid, u->last_box = b;
     u->last_hover = u->hover_layer == u->layer && ui_in(b, u->mx, u->my);
     return ch;
@@ -2542,6 +2858,7 @@ int goome_ui_collapsing(goome_ui *u, const char *label, int *open)
     int hov, held;
     if ((ui_nav(u, id, b, ui_tr(u, th->radius), UN_PLAIN, NULL, 0) & 1) && u->nav_dx) *o = u->nav_dx > 0;
     if (ui_button_logic(u, id, b, &hov, &held)) *o = !*o;
+    ui_ax_expander(u, id, b, label, n, GOOME_ROLE_BUTTON, *o, 0);
     if (fresh) s->v[2] = *o ? 1 : 0;
     double h = ui_anim(u, s, 0, hov || held), k = ui_anim_ms(u, s, 2, *o, ui_ms(u, th->collapse_ms));
     ui_rrect(u, b, ui_tr(u, th->radius), ui_mix(ui_fade(th->input_bg, 0.7), th->hover, h));
@@ -2567,6 +2884,7 @@ void goome_ui_progress(goome_ui *u, double frac, const char *text)
     int fresh;
     ui_st *s = ui_get(u, id, &fresh);
     ui_hover(u, id, b);
+    ui_ax_progress(u, b, frac, text);
     double r = ui_min(th->radius, bh / 2);
     goome_radii rr = ui_trc(u, th->radius, bh / 2);
     ui_rrect(u, b, rr, th->input_bg);
@@ -2647,6 +2965,7 @@ int goome_ui_color(goome_ui *u, const char *label, uint32_t *argb)
         else if (u->pop_closed != id) u->popup = id, u->pop_kind = UI_POP_COLOR, s->v[1] = 0;
     }
     int open = u->popup == id;
+    if (ui_ax_color(u, id, b, label, n, argb, open)) ch = 1;
     double h = ui_anim(u, s, 0, hov || held || open), k = ui_anim_ms(u, s, 1, open, ui_ms(u, th->popup_ms));
     if (h > 0) ui_rrect(u, b, ui_tr(u, th->radius - 2), ui_fade(th->hover, h * 0.7));
     double swh = ui_round(20 * u->em);
@@ -2873,6 +3192,7 @@ static void ui_pop_finish(goome_ui *u)
     u->nid = f->nid_out;
     u->nfr--;
     u->pdepth = f->pop - 1;
+    ui_ax_pop(u, UI_AXP, NULL);
 }
 
 static int ui_row_hover(goome_ui *u, ui_pop *p, uint32_t id, int idx, ui_box b)
@@ -2932,10 +3252,11 @@ int goome_ui_menu_item(goome_ui *u, const char *label, const char *shortcut, int
         if (u->mh_ms >= u->cfg.menu_delay_ms * 4.0 / 3) ui_pop_cut(u, u->pdepth);
         else u->anim_next = 1;
     }
-    int click = alive && ((hov && u->released) || (p && p->fire == idx));
+    int click = alive && ((hov && u->released) || (p && p->fire == idx) || ui_ax_do(u, id, 'p'));
     if (p && p->fire == idx) p->fire = -1;
     ui_menu_hl(u, id, b, p ? p->sel == idx : hov);
     if (click && checked) *checked = !*checked;
+    ui_ax_menuitem(u, id, b, label, n, checked);
     double cy = b.y + b.h / 2, x = b.x + 12;
     if (checked && *checked) {
         double q = u->em;
@@ -2968,7 +3289,7 @@ static int ui_menu_head(goome_ui *u, const char *label, uint32_t id, ui_box hb, 
     int any = bar && u->npop > base && u->ps[base].bar == bar;
     int hov = u->hover_layer == u->layer && ui_in(hb, u->mx, u->my) && (!u->nclip || ui_in(u->clip[u->nclip - 1], u->mx, u->my));
     u->last_id = id, u->last_hover = hov, u->last_box = hb;
-    if (hov && u->pressed) {
+    if ((hov && u->pressed) || ui_ax_do(u, id, 'p')) {
         u->active = id, u->mb_hit = 1;
         if (p) ui_pop_cut(u, base), p = NULL;
         else p = ui_pop_push(u, pid, UP_MENU, UA_BELOW, an);
@@ -2994,8 +3315,9 @@ static int ui_menu_head(goome_ui *u, const char *label, uint32_t id, ui_box hb, 
         else if (k > 0) ui_rrect(u, hb, r, ui_fade(th->hover, k));
         ui_text_mid(u, hb.x + 10, hb.y + hb.h / 2, label, n, 0, p || hov ? th->text : ui_mix(th->text_dim, th->text, 0.7));
     }
-    if (!p) return 0;
-    return ui_pop_begin(u, p, bar_i >= 0 ? 220 : hb.w, 5);
+    int on = p && ui_pop_begin(u, p, bar_i >= 0 ? 220 : hb.w, 5);
+    ui_ax_menu(u, id, hb, label, n, p != NULL, on);
+    return on;
 }
 
 int goome_ui_menu_begin(goome_ui *u, const char *label)
@@ -3030,7 +3352,7 @@ int goome_ui_menu_begin(goome_ui *u, const char *label)
     ui_box b = ui_menu_row(u, ui_round(12 + cw + tw + 50));
     int idx = par->items++;
     int hov = ui_row_hover(u, par, id, idx, b);
-    int want = (hov && (u->npop <= base || u->mh_ms >= u->cfg.menu_delay_ms || u->pressed)) || par->sub == idx || par->fire == idx;
+    int want = (hov && (u->npop <= base || u->mh_ms >= u->cfg.menu_delay_ms || u->pressed)) || par->sub == idx || par->fire == idx || ui_ax_do(u, id, 'p');
     if (want && !p && ui_pop_alive(u)) {
         p = ui_pop_push(u, pid, UP_MENU, UA_RIGHT, b);
         if (p && (par->sub == idx || par->fire == idx)) p->sel = 0;
@@ -3045,9 +3367,10 @@ int goome_ui_menu_begin(goome_ui *u, const char *label)
         ui_seg(u, ax - d * 0.6, cy - d, ax + d * 0.4, cy, 1.6 * u->em, p ? th->text : th->text_dim);
         ui_seg(u, ax + d * 0.4, cy, ax - d * 0.6, cy + d, 1.6 * u->em, p ? th->text : th->text_dim);
     }
-    if (!p) return 0;
-    p->anchor = ui_bx(par->box.x, b.y, par->box.w, b.h);
-    return ui_pop_begin(u, p, 180, 5);
+    if (p) p->anchor = ui_bx(par->box.x, b.y, par->box.w, b.h);
+    int r = p && ui_pop_begin(u, p, 180, 5);
+    ui_ax_menu(u, id, b, label, n, p != NULL, r);
+    return r;
 }
 
 void goome_ui_menu_end(goome_ui *u) { ui_pop_finish(u); }
@@ -3068,12 +3391,14 @@ int goome_ui_menubar_begin(goome_ui *u)
     u->mb_on = 1, u->mb_box = b, u->mb_x = b.x + 6, u->mb_base = u->pdepth, u->mb_i = 0, u->mb_open_i = -1, u->mb_hit = 0;
     u->mb_id = ui_hashi(ui_id(u, "##menubar"), (uint32_t)u->nmbs + 1);
     if (u->nmbs < 4) u->mbs[u->nmbs++] = b;
+    ui_ax_push(u, ui_ax_add(u, u->mb_id, b, GOOME_ROLE_GROUP, "Menu bar", 8, 0, 0), UI_AXM);
     return 1;
 }
 
 void goome_ui_menubar_end(goome_ui *u)
 {
     if (!u || !u->c || !u->mb_on) return;
+    ui_ax_pop(u, UI_AXM, NULL);
     u->mb_on = 0;
     int n = u->mb_i;
     u->mb_want = -1;
@@ -3094,8 +3419,9 @@ int goome_ui_context_begin(goome_ui *u, const char *id)
         p = ui_pop_push(u, pid, UP_MENU, UA_POINT, ui_bx(u->pmx, u->pmy, 0, 0));
         if (l->any) u->rpressed = 0;
     }
-    if (!p) return 0;
-    return ui_pop_begin(u, p, 190, 5);
+    int r = p && ui_pop_begin(u, p, 190, 5);
+    ui_ax_pop_node(u, pid, GOOME_ROLE_MENU, NULL, 0, r);
+    return r;
 }
 
 void goome_ui_context_end(goome_ui *u) { ui_pop_finish(u); }
@@ -3117,7 +3443,9 @@ int goome_ui_popup_begin(goome_ui *u, const char *id)
         ui_pop_cut(u, u->pdepth);
         return 0;
     }
-    return ui_pop_begin(u, p, 160, u->th.pad);
+    int r = ui_pop_begin(u, p, 160, u->th.pad);
+    ui_ax_pop_node(u, p->id, GOOME_ROLE_GROUP, id, id ? ui_shown(id) : 0, r);
+    return r;
 }
 
 void goome_ui_popup_end(goome_ui *u) { ui_pop_finish(u); }
@@ -3161,6 +3489,7 @@ int goome_ui_modal_begin(goome_ui *u, const char *title, int *open)
     f->flag = open;
     ui_box d = f->box;
     int n = ui_shown(t);
+    ui_ax_pop_node(u, pid, GOOME_ROLE_DIALOG, t, n, 1);
     double sz = ui_round(u->size * 1.2), lh = goome_text_line_height(th->font, sz);
     double ty = d.y + pad - 2;
     ui_text_mid(u, d.x + pad, ty + lh / 2, t, n, sz, th->text);
@@ -3170,6 +3499,7 @@ int goome_ui_modal_begin(goome_ui *u, const char *title, int *open)
         ui_box xb = ui_bx(d.x + d.w - pad + 6 - xs, ui_round(ty + lh / 2 - xs / 2), xs, xs);
         int hov, held;
         if (ui_button_logic(u, xid, xb, &hov, &held)) p->close_req = 1;
+        ui_ax_btn(u, xid, xb, "Close", 5);
         ui_st *s = ui_get(u, xid, NULL);
         double k = ui_anim(u, s, 0, hov || held), cx = xb.x + xs / 2, cy = xb.y + xs / 2, dd = 4 * u->em;
         if (k > 0) ui_rect(u, xb, 7, ui_fade(ui_mix(th->hover, th->active, held), k));
@@ -3255,6 +3585,7 @@ static int ui_capbtn(goome_ui *u, uint32_t id, ui_box b, int kind, int max, goom
 {
     const goome_theme *th = &u->th;
     int hov, held, click = ui_button_logic(u, id, b, &hov, &held);
+    ui_ax_btn(u, id, b, kind == 0 ? "Minimize" : kind == 2 ? "Close" : max ? "Restore" : "Maximize", -1);
     ui_st *s = ui_get(u, id, NULL);
     double k = ui_anim(u, s, 0, hov || held);
     uint32_t bg = kind == 2 ? ui_red(u, held, 0xFFE5484D, 0xFFB8342F) : ui_mix(th->hover, th->active, held);
@@ -3294,6 +3625,7 @@ int goome_ui_app(goome_ui *u, const char *title, int flags)
     u->app_on = 1, u->app_flags = flags, u->app_box = box, u->app_r = r;
     uint32_t bar = th->panel | 0xFF000000u, id = ui_hash(0x41505030u, "##app", 5);
     ui_rect(u, box, r, th->bg | 0xFF000000u);
+    ui_ax_push(u, ui_ax_add(u, id, box, GOOME_ROLE_WINDOW, title, title ? ui_shown(title) : 0, 0, 0), UI_AXA);
     double y = a.y;
     if (flags & GOOME_APP_TITLEBAR) {
         double h = th->app_title_h > 0 ? ui_round(th->app_title_h) : ui_round(u->lh + 20), bw = ui_round(46 * u->em);
@@ -3387,10 +3719,12 @@ void goome_ui_app_end(goome_ui *u)
         if (th->font_small) u->th.font = th->font_small;
         ui_clip_push(u, ui_bx(b.x, b.y, b.w - 10, b.h));
         ui_text_mid(u, b.x + th->pad + 4, b.y + b.h / 2 + 0.5, u->status, n, th->small_size > 0 ? th->small_size : ui_round(u->size * 0.93), th->text_dim);
+        ui_ax_add(u, ui_hashi(ui_hash(0x41505030u, "##app", 5), 6), b, GOOME_ROLE_TEXT, u->status, n, 0, 0);
         ui_clip_pop(u);
         u->th.font = keep;
     }
     if (u->app_r > 0) ui_outline(u, u->app_box, u->app_r, 1, ui_mix(th->border, 0x40FFFFFFu, 0.3));
+    ui_ax_pop(u, UI_AXA, NULL);
     u->cl = cl;
 }
 
@@ -3828,8 +4162,14 @@ static int ui_ed_locate(goome_ui *u, ui_ed *e, char *s, int len, int pos, double
 {
     int i = ui_ed_line(e, pos), n = ui_ed_rows_of(u, e, s, i, len), r = 0;
     while (r + 1 < n && e->rb[r + 1] <= pos) r++;
-    int rs = n ? e->rb[r] : e->ls[i];
-    if (x) *x = ui_ew(u, s, rs, pos);
+    int rs = n ? e->rb[r] : e->ls[i], re = r + 1 < n ? e->rb[r + 1] : ui_ed_lend(e, i, len);
+    if (x && ui_bd(u, s + rs, re - rs)) {
+        gm_tc *b;
+        int nb = ui_bd_lay(u, s + rs, re - rs, &b);
+        *x = ui_bd_x(b, nb, pos - rs);
+        free(b);
+    } else if (x)
+        *x = ui_ew(u, s, rs, pos);
     return e->cr[i] + r;
 }
 
@@ -3839,7 +4179,27 @@ static int ui_ed_hit_row(goome_ui *u, ui_ed *e, char *s, int len, int g, double 
     ui_ed_row_span(u, e, s, len, g, &rs, &re, &last, NULL);
     if (!last && re > rs) re = s[re - 1] == ' ' ? re - 1 : ui_u8_prev(s, re);
     if (re < rs) re = rs;
+    if (ui_bd(u, s + rs, re - rs)) {
+        gm_tc *b;
+        int nb = ui_bd_lay(u, s + rs, re - rs, &b), at = ui_bd_hit(b, nb, x);
+        free(b);
+        return rs + at;
+    }
     return ui_ehit(u, s, rs, re, x);
+}
+
+static int ui_ed_step(goome_ui *u, ui_ed *e, char *s, int len, int c, int right)
+{
+    int rs, re, last, line, g = ui_ed_locate(u, e, s, len, c, NULL);
+    ui_ed_row_span(u, e, s, len, g, &rs, &re, &last, &line);
+    int bd = ui_bd(u, s + rs, re - rs);
+    if (!bd) return right ? gm_text_next(s, c, len) : gm_text_prev(s, c);
+    gm_tc *b;
+    int nb = ui_bd_lay(u, s + rs, re - rs, &b), to = ui_bd_move(b, nb, c - rs, right);
+    free(b);
+    if (to >= 0) return rs + to;
+    if (right != (bd == 2)) return re < len && s[re] == '\n' ? re + 1 : re;
+    return rs > 0 && s[rs - 1] == '\n' ? rs - 1 : gm_text_prev(s, rs);
 }
 
 static void ui_ed_record(ui_ed *e, int pos, const char *del, int dn, const char *ins, int in, int c0, int a0, int c1, int kind)
@@ -4061,6 +4421,7 @@ int goome_ui_text_edit(goome_ui *u, const char *id, char *buf, int cap, double h
     uint32_t eid = ui_id(u, id);
     ui_ed *e = ui_ed_get(u, eid);
     if (!e) return 0;
+    if (!ro && ui_ax_edit(u, eid, buf, cap)) ch = 1;
     ui_st *st = ui_get(u, eid, NULL);
     goome_font *keep = u->th.font;
     if (flags & GOOME_EDIT_MONO) u->th.font = ui_mono(u);
@@ -4175,6 +4536,13 @@ int goome_ui_text_edit(goome_ui *u, const char *id, char *buf, int cap, double h
             int lo = e->anc < e->cur ? e->anc : e->cur, hi = e->anc < e->cur ? e->cur : e->anc, has = lo != hi;
             int c = e->cur, keepx = 0, nav = 1, kind = -1;
             e->blink = u->now;
+            if (key == UI_IME_KEY) {
+                int n;
+                char *t = ro ? NULL : ui_ime_take(u, k, 1, 0, &n);
+                if (t && n) e->brk = 1, ch |= ui_ed_edit(e, buf, &len, cap, lo, hi, t, n, 0), e->brk = 1, moved = 1;
+                free(t);
+                continue;
+            }
             if (act == GOOME_ACT_SELECT_ALL) e->anc = 0, c = len, nav = 0;
             else if (act == GOOME_ACT_COPY || act == GOOME_ACT_CUT) {
                 nav = 0;
@@ -4209,8 +4577,8 @@ int goome_ui_text_edit(goome_ui *u, const char *id, char *buf, int cap, double h
             } else if (act == GOOME_ACT_WORD_LEFT || act == GOOME_ACT_WORD_RIGHT || (act < 0 && (key == GOOME_K_LEFT || key == GOOME_K_RIGHT))) {
                 int r = act == GOOME_ACT_WORD_RIGHT || (act < 0 && key == GOOME_K_RIGHT), wd = act >= 0;
                 if (has && !sh) c = r ? hi : lo;
-                else if (r) c = wd ? ui_word_right(buf, c, len) : ui_u8_next(buf, c, len);
-                else c = wd ? ui_word_left(buf, c) : ui_u8_prev(buf, c);
+                else if (r) c = wd ? ui_word_right(buf, c, len) : ui_ed_step(u, e, buf, len, c, 1);
+                else c = wd ? ui_word_left(buf, c) : ui_ed_step(u, e, buf, len, c, 0);
             } else if ((key == GOOME_K_UP || key == GOOME_K_DOWN) && cmd && !sh) {
                 e->ty += (key == GOOME_K_UP ? -rh : rh);
                 continue;
@@ -4339,6 +4707,17 @@ int goome_ui_text_edit(goome_ui *u, const char *id, char *buf, int cap, double h
         for (int r = g - e->cr[line]; r < n && g < g1; r++, g++) {
             int rs = e->rb[r], re = r + 1 < n ? e->rb[r + 1] : lend, last = r + 1 >= n;
             double y = oy + g * rh, ty = ui_round(y + (rh - lh) / 2);
+            if (ui_bd(u, buf + rs, re - rs)) {
+                gm_tc *bx;
+                int nb = ui_bd_lay(u, buf + rs, re - rs, &bx), nl = last && lo <= re && hi > re && re < len;
+                if (hi > lo && (hi > rs || nl) && lo <= re) ui_bd_sel(u, bx, nb, lo - rs, hi - rs, ox, y, rh, 2, selc, nl ? spw : 0);
+                free(bx);
+                int z = re;
+                while (z > rs && buf[z - 1] == '\n') z--;
+                if (z > rs) ui_text(u, ox, ty, buf + rs, z - rs, 0, th->text);
+                if (nums && r == 0 && nn < 128) nl_row[nn] = g, nl_line[nn++] = line;
+                continue;
+            }
             if (hi > lo) {
                 int s0 = lo > rs ? lo : rs, s1 = hi < re ? hi : re, nl = last && lo <= re && hi > re && re < len;
                 if (s1 > s0 || nl) {
@@ -4364,6 +4743,11 @@ int goome_ui_text_edit(goome_ui *u, const char *id, char *buf, int cap, double h
         long t = u->now - e->blink, bl = u->cfg.blink_ms;
         double cwd = th->caret_w > 0 ? th->caret_w : 2;
         if (bl <= 0 || (t / bl) % 2 == 0) ui_rect(u, ui_bx(ox + cx - (th->caret_w > 0 ? 0 : 0.5), oy + cg * rh + 1, cwd, rh - 2), 1, ui_c(th->caret, th->accent));
+        if (!ro) {
+            double ix = cx;
+            int ig = lo < e->cur ? ui_ed_locate(u, e, buf, len, lo, &ix) : cg;
+            ui_ime_show(u, eid, ox + ix, oy + ig * rh, rh);
+        }
     }
     ui_clip_pop(u);
     if (nn) {
@@ -4383,6 +4767,7 @@ int goome_ui_text_edit(goome_ui *u, const char *id, char *buf, int cap, double h
     u->th.font = keep;
     u->last_id = eid, u->last_box = b, u->last_hover = hov;
     if (!u->down && u->active != eid) e->mode = 0;
+    ui_ax_field(u, eid, b, id, ui_shown(id), NULL, buf, len, e->cur, (ro ? GOOME_INPUT_READONLY : 0) | 0x10000);
     return ch;
 }
 
@@ -4413,6 +4798,7 @@ int goome_ui_table_begin(goome_ui *u, const char *id, int cols, double h, int fl
     t->nid_out = u->nid;
     if (u->nid < UI_MAXID) u->ids[u->nid++] = t->id;
     t->live = 1;
+    ui_ax_push(u, ui_ax_add(u, t->id, t->box, GOOME_ROLE_TABLE, id, id ? ui_shown(id) : 0, 0, 0), UI_AXB);
     if (h > 0 && !ui_vis(u, t->box.x, t->box.y, t->box.w, t->box.h)) {
         t->live = 2;
         return 0;
@@ -4672,6 +5058,7 @@ void goome_ui_table_end(goome_ui *u)
     }
     u->nid = t->nid_out;
     u->last_box = b, u->last_id = t->id, u->last_hover = 0;
+    ui_ax_pop(u, UI_AXB, &b);
     u->ntb--;
 }
 
@@ -4700,6 +5087,7 @@ int goome_ui_tree(goome_ui *u, const char *label, int *open)
     ui_clip_push(u, b);
     ui_text_mid(u, b.x + ui_round(22 * u->em), cy, label, n, 0, th->text);
     ui_clip_pop(u);
+    ui_ax_expander(u, id, b, label, n, GOOME_ROLE_TREE, *o, 1);
     if (!*o) return 0;
     if (u->ntree < UI_MAXTREE) {
         ui_lay *l = ui_lay_cur(u);
@@ -4715,6 +5103,7 @@ void goome_ui_tree_end(goome_ui *u)
 {
     if (!u || !u->c || u->ntree <= 0) return;
     if (u->ntree-- > UI_MAXTREE) return;
+    ui_ax_pop(u, UI_AXT, NULL);
     ui_tree *t = &u->trees[u->ntree];
     ui_lay *l = t->lay;
     l->x0 -= t->ind, l->w += t->ind, l->same = 0;
@@ -4800,6 +5189,7 @@ static int ui_dragv(goome_ui *u, const char *label, double *v, double speed, dou
     ui_box b = ui_field_label(u, label, &n);
     uint32_t id = ui_id(u, label);
     ui_st *s = ui_get(u, id, NULL);
+    ch = ui_ax_spin(u, id, b, label, n, v, lo, hi, fmt, whole);
     if (speed == 0) speed = whole ? 0.2 : 0.01;
     if (u->num_id == id) {
         int r = ui_num_text(u, label, id, b, v, lo, hi, whole);
@@ -4918,6 +5308,7 @@ int goome_ui_number(goome_ui *u, const char *label, double *v, double step, cons
     int n, ch = 0;
     ui_box b = ui_field_label(u, label, &n);
     uint32_t id = ui_id(u, label);
+    ch = ui_ax_spin(u, id, b, label, n, v, 0, 0, fmt, 0);
     if (step == 0) step = 1;
     double bw = ui_round(u->fh * 1.05);
     goome_radii rl = ui_tr(u, th->radius), rr = rl;
@@ -5030,6 +5421,7 @@ void goome_ui_plot_lines(goome_ui *u, const char *label, const float *v, int n, 
     ui_box p = ui_plot_box(u, label, v, n, h, &ty);
     uint32_t id = ui_id(u, label);
     int hov = ui_hover(u, id, p);
+    ui_ax_text(u, p, label, label ? ui_shown(label) : 0, GOOME_ROLE_IMAGE);
     ui_rrect(u, p, ui_tr(u, ui_max(0, th->radius - 2)), ui_fade(th->input_bg, 0.8));
     for (int i = 1; i < 4; i++) ui_rect(u, ui_bx(p.x + 6, ui_round(p.y + p.h * i / 4), p.w - 12, 1), 0, ui_fade(th->text, 0.05));
     if (n < 1) return;
@@ -5080,6 +5472,7 @@ void goome_ui_plot_bars(goome_ui *u, const char *label, const float *v, int n, d
     ui_box p = ui_plot_box(u, label, v, n, h, &ty);
     uint32_t id = ui_id(u, label);
     int hov = ui_hover(u, id, p);
+    ui_ax_text(u, p, label, label ? ui_shown(label) : 0, GOOME_ROLE_IMAGE);
     ui_rrect(u, p, ui_tr(u, ui_max(0, th->radius - 2)), ui_fade(th->input_bg, 0.8));
     if (n < 1) return;
     if (min >= max) {
@@ -5286,6 +5679,7 @@ void goome_ui_spinner(goome_ui *u, double size)
     if (size <= 0) size = u->th.spinner > 0 ? u->th.spinner : ui_round(u->lh);
     ui_box b = ui_item(u, size, size);
     ui_hover(u, ui_auto(u), b);
+    ui_ax_progress(u, b, -1, NULL);
     double cx = b.x + size / 2, cy = b.y + size / 2, w = ui_max(2, size / 8), r = size / 2 - w / 2 - 0.5;
     double t = (double)(u->now % 1400) / 1400, pi2 = 6.283185307179586;
     double head = t * pi2 * 1.25, k = (double)(u->now % 2800) / 2800;
@@ -5306,6 +5700,7 @@ int goome_ui_link(goome_ui *u, const char *text)
     uint32_t id = ui_id(u, text);
     ui_nav(u, id, ui_bx(b.x - 2, b.y, b.w + 4, b.h), goome_radius(4), UN_PLAIN, NULL, 0);
     int hov, held, click = ui_button_logic(u, id, b, &hov, &held);
+    ui_ax_btn(u, id, b, text, n);
     if (hov || held) u->cur_want = u->cfg.cursor[GOOME_CUR_LINK];
     ui_st *s = ui_get(u, id, NULL);
     double h = ui_anim(u, s, 0, hov || held);
@@ -5328,6 +5723,7 @@ void goome_ui_badge(goome_ui *u, const char *text, uint32_t argb)
     double h = ui_round(lh + 4), w = ui_round(ui_max(h, tw + h * 0.9));
     ui_box b = ui_item(u, w, h);
     ui_hover(u, ui_auto(u), b);
+    ui_ax_text(u, b, text, n, GOOME_ROLE_TEXT);
     uint32_t bg = argb ? argb : ui_c(th->badge, th->accent);
     int lum = (int)(((bg >> 16) & 255) * 299 + ((bg >> 8) & 255) * 587 + (bg & 255) * 114) / 1000;
     uint32_t fg = (bg >> 24) < 140 ? th->text : lum > 150 ? 0xFF16181C : 0xFFFFFFFF;
@@ -5335,6 +5731,438 @@ void goome_ui_badge(goome_ui *u, const char *text, uint32_t argb)
     ui_text_mid(u, ui_round(b.x + (w - tw) / 2), b.y + h / 2, text, n, sz, fg);
     u->th.font = keep;
 }
+#define UI_AXMAX 4096
+#define UI_AXDEEP 64
+#define UI_AXACT 16
+
+typedef struct {
+    int verb;
+    uint32_t id;
+    char text[64];
+} ui_axact;
+
+typedef struct ui_ax_s {
+    goome_a11y_node *n;
+    gm_ax_x *x;
+    char *text;
+    int count, cap, ntext, tcap, depth, nact, npend, combo, has_role, has_val, role;
+    int stack[UI_AXDEEP], kind[UI_AXDEEP];
+    ui_axact act[UI_AXACT], pend[UI_AXACT];
+    char label[96], value[64];
+} ui_axs;
+
+static ui_axs *ui_ax_on(goome_ui *u) { return u->ax_on && u->ax && u->c && u->mon == 0 ? u->ax : NULL; }
+
+static void ui_ax_cp(char *d, int cap, const char *s, int n)
+{
+    if (!s || n < 0) n = 0;
+    if (n > cap - 1) {
+        n = cap - 1;
+        while (n > 0 && ((unsigned char)s[n] & 0xC0) == 0x80) n--;
+    }
+    if (n) memcpy(d, s, (size_t)n);
+    d[n] = 0;
+}
+
+static int ui_ax_add(goome_ui *u, uint32_t id, ui_box b, int role, const char *s, int n, int states, int kind)
+{
+    ui_axs *a = ui_ax_on(u);
+    if (!a || !id) return -1;
+    if (a->count >= a->cap) {
+        if (a->cap >= UI_AXMAX) return -1;
+        int nc = a->cap ? a->cap * 2 : 128;
+        goome_a11y_node *nn = realloc(a->n, sizeof(*nn) * (size_t)nc);
+        if (!nn) return -1;
+        a->n = nn;
+        gm_ax_x *nx = realloc(a->x, sizeof(*nx) * (size_t)nc);
+        if (!nx) return -1;
+        a->x = nx, a->cap = nc;
+    }
+    int i = a->count++;
+    goome_a11y_node *d = &a->n[i];
+    gm_ax_x *x = &a->x[i];
+    memset(d, 0, sizeof(*d));
+    memset(x, 0, sizeof(*x));
+    d->role = role, d->parent = a->depth ? a->stack[a->depth - 1] : -1, d->states = states, d->id = id;
+    d->x = b.x, d->y = b.y, d->w = b.w, d->h = b.h;
+    ui_ax_cp(d->label, (int)sizeof(d->label), s, s && n < 0 ? (int)strlen(s) : n);
+    x->press = id, x->kind = kind;
+    if (u->nclip) {
+        ui_box c = u->clip[u->nclip - 1];
+        if (b.x >= c.x + c.w || b.y >= c.y + c.h || b.x + b.w <= c.x || b.y + b.h <= c.y) x->kind |= GM_AXK_HIDDEN;
+    }
+    return i;
+}
+
+static void ui_ax_val(goome_ui *u, int i, const char *s, int n)
+{
+    ui_axs *a = u->ax;
+    if (!a || i < 0 || i >= a->count) return;
+    if (!s) s = "", n = 0;
+    if (n < 0) n = (int)strlen(s);
+    ui_ax_cp(a->n[i].value, (int)sizeof(a->n[i].value), s, n);
+    if (n < (int)sizeof(a->n[i].value)) return;
+    if (a->ntext + n + 1 > a->tcap) {
+        int nc = a->tcap ? a->tcap : 4096;
+        while (nc < a->ntext + n + 1) nc *= 2;
+        char *t = realloc(a->text, (size_t)nc);
+        if (!t) return;
+        a->text = t, a->tcap = nc;
+    }
+    memcpy(a->text + a->ntext, s, (size_t)n);
+    a->x[i].text = a->ntext, a->x[i].ntext = n;
+    a->ntext += n;
+    a->text[a->ntext++] = 0;
+}
+
+static void ui_ax_push(goome_ui *u, int i, int kind)
+{
+    ui_axs *a = ui_ax_on(u);
+    if (!a || i < 0 || a->depth >= UI_AXDEEP) return;
+    a->stack[a->depth] = i, a->kind[a->depth] = kind;
+    a->depth++;
+}
+
+static void ui_ax_pop(goome_ui *u, int kind, const ui_box *b)
+{
+    ui_axs *a = ui_ax_on(u);
+    if (!a) return;
+    for (int k = a->depth - 1; k >= 0; k--)
+        if (a->kind[k] == kind) {
+            if (b) {
+                goome_a11y_node *d = &a->n[a->stack[k]];
+                d->x = b->x, d->y = b->y, d->w = b->w, d->h = b->h;
+            }
+            a->depth = k;
+            return;
+        }
+}
+
+static ui_axact *ui_ax_get(goome_ui *u, uint32_t id, int verb)
+{
+    ui_axs *a = u->ax_on ? u->ax : NULL;
+    if (!a || !a->nact || !id) return NULL;
+    for (int i = 0; i < a->nact; i++)
+        if (a->act[i].id == id && a->act[i].verb == verb) return &a->act[i];
+    return NULL;
+}
+
+static void ui_ax_drop(goome_ui *u, ui_axact *t)
+{
+    ui_axs *a = u->ax;
+    int k = (int)(t - a->act);
+    memmove(t, t + 1, sizeof(*t) * (size_t)(a->nact - k - 1));
+    a->nact--;
+    u->anim_next = 1;
+}
+
+static int ui_ax_do(goome_ui *u, uint32_t id, int verb)
+{
+    ui_axact *t = ui_ax_get(u, id, verb);
+    if (!t) return 0;
+    ui_ax_drop(u, t);
+    return 1;
+}
+
+static const char *ui_ax_take(goome_ui *u, uint32_t id, char *out, int cap)
+{
+    ui_axact *t = ui_ax_get(u, id, 's');
+    if (!t) return NULL;
+    const char *l = gm_ax_long(u->g, id);
+    snprintf(out, (size_t)cap, "%s", l ? l : t->text);
+    ui_ax_drop(u, t);
+    return out;
+}
+
+static int ui_ax_feed(goome_ui *u, const goome_event *e)
+{
+    ui_axs *a = u->ax;
+    if (!a || !u->ax_on || strncmp(e->msg, "a11y ", 5)) return 0;
+    const char *p = e->msg + 5;
+    int verb = !strncmp(p, "press ", 6) ? 'p' : !strncmp(p, "focus ", 6) ? 'f' : !strncmp(p, "set ", 4) ? 's' : !strncmp(p, "expand ", 7) ? 'e' : !strncmp(p, "collapse ", 9) ? 'c' : 0;
+    if (!verb) return 0;
+    while (*p && *p != ' ') p++;
+    while (*p == ' ') p++;
+    uint32_t id = 0;
+    while (*p >= '0' && *p <= '9') id = id * 10 + (uint32_t)(*p++ - '0');
+    if (*p == ' ') p++;
+    if (verb != 'f' && verb != 's') {
+        int k = -1;
+        for (int i = 0; i < a->count && k < 0; i++)
+            if (a->n[i].id == id) k = i;
+        if (k < 0) return 1;
+        int open = (a->n[k].states & GOOME_A11Y_EXPANDED) != 0;
+        if (verb != 'p' && (!(a->x[k].kind & GM_AXK_EXPANDABLE) || open == (verb == 'e'))) return 1;
+        id = a->x[k].press, verb = 'p';
+    }
+    if (a->npend >= UI_AXACT) return 1;
+    ui_axact *t = &a->pend[a->npend++];
+    t->verb = verb, t->id = id;
+    snprintf(t->text, sizeof(t->text), "%s", p);
+    return 1;
+}
+
+static void ui_ax_begin(goome_ui *u)
+{
+    ui_axs *a = ui_ax_on(u);
+    if (!a) return;
+    memcpy(a->act, a->pend, sizeof(a->act[0]) * (size_t)a->npend);
+    a->nact = a->npend, a->npend = 0;
+    a->count = 0, a->ntext = 0, a->depth = 0, a->combo = -1;
+}
+
+static void ui_ax_end(goome_ui *u)
+{
+    ui_axs *a = ui_ax_on(u);
+    if (!a) return;
+    a->nact = 0;
+    a->has_role = a->has_val = 0;
+    for (int i = 0; i < a->count; i++) {
+        if (u->focus && a->n[i].id == u->focus) a->n[i].states |= GOOME_A11Y_FOCUSED;
+        for (int j = i - 1; j >= 0 && j >= i - 64; j--)
+            if (a->n[j].id == a->n[i].id) {
+                a->n[i].id = ui_hashi(a->n[i].id, (uint32_t)i);
+                break;
+            }
+    }
+    gm_ax_sync(u->g, a->n, a->x, a->count, a->text, a->ntext, !u->unfocused);
+}
+
+static void ui_ax_free(goome_ui *u)
+{
+    if (!u->ax) return;
+    free(u->ax->n), free(u->ax->x), free(u->ax->text);
+    free(u->ax);
+    u->ax = NULL;
+}
+
+void goome_ui_a11y(goome_ui *u, int on)
+{
+    if (!u) return;
+    if (on && !u->ax) u->ax = calloc(1, sizeof(ui_axs));
+    u->ax_on = on && u->ax;
+}
+
+void goome_ui_a11y_role(goome_ui *u, int role, const char *label)
+{
+    if (!u || !u->ax) return;
+    u->ax->role = role, u->ax->has_role = 1;
+    ui_ax_cp(u->ax->label, (int)sizeof(u->ax->label), label, label ? (int)strlen(label) : 0);
+}
+
+void goome_ui_a11y_value(goome_ui *u, const char *value)
+{
+    if (!u || !u->ax) return;
+    u->ax->has_val = 1;
+    ui_ax_cp(u->ax->value, (int)sizeof(u->ax->value), value, value ? (int)strlen(value) : 0);
+}
+
+int goome_a11y_tree(goome_ui *u, goome_a11y_node *out, int max)
+{
+    if (!u || !u->ax || !u->ax_on) return 0;
+    for (int i = 0; out && i < u->ax->count && i < max; i++) out[i] = u->ax->n[i];
+    return u->ax->count;
+}
+
+static void ui_ax_text(goome_ui *u, ui_box b, const char *s, int n, int role) { ui_ax_add(u, u->last_id, b, role, s, n, 0, 0); }
+
+static void ui_ax_btn(goome_ui *u, uint32_t id, ui_box b, const char *s, int n) { ui_ax_add(u, id, b, GOOME_ROLE_BUTTON, s, n, 0, GM_AXK_PRESS | GM_AXK_FOCUSABLE); }
+
+static void ui_ax_check(goome_ui *u, uint32_t id, ui_box b, const char *s, int n, int role, int on)
+{
+    ui_ax_add(u, id, b, role, s, n, on ? GOOME_A11Y_CHECKED : 0, GM_AXK_PRESS | GM_AXK_CHECKABLE | GM_AXK_FOCUSABLE);
+}
+
+static int ui_ax_num_in(goome_ui *u, uint32_t id, double *v, double lo, double hi)
+{
+    char t[256];
+    double nv;
+    if (!ui_ax_take(u, id, t, (int)sizeof(t)) || !ui_parse(t, &nv)) return 0;
+    if (lo < hi) nv = ui_clamp(nv, lo, hi);
+    else if (hi < lo) nv = ui_clamp(nv, hi, lo);
+    if (nv == *v) return 0;
+    *v = nv;
+    return 1;
+}
+
+static int ui_ax_slider(goome_ui *u, uint32_t id, ui_box b, const char *s, int n, double *v, double lo, double hi, const char *val)
+{
+    int ch = ui_ax_num_in(u, id, v, lo, hi);
+    int i = ui_ax_add(u, id, b, GOOME_ROLE_SLIDER, s, n, 0, GM_AXK_FOCUSABLE | GM_AXK_RANGE | GM_AXK_EDITABLE);
+    if (i >= 0) u->ax->n[i].num = *v, u->ax->n[i].min = lo, u->ax->n[i].max = hi;
+    ui_ax_val(u, i, val, -1);
+    return ch;
+}
+
+static int ui_ax_input(goome_ui *u, uint32_t id, char *buf, int cap, int *len, int flags)
+{
+    if (!ui_ax_get(u, id, 's')) return 0;
+    char *t = malloc((size_t)cap + 1);
+    if (!t) return 0;
+    if (!ui_ax_take(u, id, t, cap) || (flags & GOOME_INPUT_READONLY)) {
+        free(t);
+        return 0;
+    }
+    int n = (int)strlen(t);
+    while (n > 0 && ((unsigned char)t[n] & 0xC0) == 0x80) n--;
+    memcpy(buf, t, (size_t)n);
+    buf[n] = 0;
+    free(t);
+    *len = n;
+    return 1;
+}
+
+static void ui_ax_field(goome_ui *u, uint32_t id, ui_box b, const char *label, int n, const char *hint, const char *shown, int len, int cur, int flags)
+{
+    if (label && !strcmp(label, "##t")) return;
+    if (!n && hint) label = hint, n = (int)strlen(hint);
+    int k = GM_AXK_FOCUSABLE | ((flags & GOOME_INPUT_READONLY) ? 0 : GM_AXK_EDITABLE) | ((flags & GOOME_INPUT_PASSWORD) ? GM_AXK_PASSWORD : 0) | ((flags & 0x10000) ? GM_AXK_MULTILINE : 0);
+    int i = ui_ax_add(u, id, b, GOOME_ROLE_INPUT, label, n, 0, k);
+    if (i < 0) return;
+    ui_ax_val(u, i, shown, len);
+    u->ax->n[i].caret = gm_ax_chars(shown, cur);
+}
+
+static int ui_ax_combo(goome_ui *u, uint32_t id, ui_box b, const char *s, int n, int *sel, const char *const *items, int count, int open)
+{
+    char t[256];
+    int ch = 0;
+    if (items && ui_ax_take(u, id, t, (int)sizeof(t))) {
+        int k = -1;
+        for (int i = 0; i < count && k < 0; i++)
+            if (items[i] && !strcmp(items[i], t)) k = i;
+        if (k < 0 && t[0] >= '0' && t[0] <= '9') {
+            const char *p = t;
+            k = gm_num(&p);
+        }
+        if (k >= 0 && k < count && k != *sel) *sel = k, ch = 1;
+    }
+    const char *cur = items && *sel >= 0 && *sel < count && items[*sel] ? items[*sel] : "";
+    int i = ui_ax_add(u, id, b, GOOME_ROLE_COMBO, s, n, open ? GOOME_A11Y_EXPANDED : 0, GM_AXK_PRESS | GM_AXK_EXPANDABLE | GM_AXK_FOCUSABLE | GM_AXK_EDITABLE);
+    ui_ax_val(u, i, cur, -1);
+    if (u->ax) u->ax->combo = i;
+    return ch;
+}
+
+static void ui_ax_list(goome_ui *u, uint32_t id, ui_box b, int on)
+{
+    if (!ui_ax_on(u)) return;
+    if (!on) {
+        ui_ax_pop(u, UI_AXL, NULL);
+        ui_ax_pop(u, UI_AXL, NULL);
+        return;
+    }
+    ui_ax_push(u, u->ax->combo, UI_AXL);
+    ui_ax_push(u, ui_ax_add(u, ui_hashi(id, 99), b, GOOME_ROLE_LIST, NULL, 0, 0, 0), UI_AXL);
+}
+
+static void ui_ax_item(goome_ui *u, uint32_t id, ui_box b, const char *s, int sel, int role)
+{
+    ui_ax_add(u, id, b, role, s, s ? ui_shown(s) : 0, sel ? GOOME_A11Y_SELECTED : 0, GM_AXK_PRESS | GM_AXK_SELECTABLE | (role == GOOME_ROLE_ITEM && u->popup ? 0 : GM_AXK_FOCUSABLE));
+}
+
+static void ui_ax_tabs(goome_ui *u, uint32_t id, ui_box b, const char *s, int on)
+{
+    if (on) ui_ax_push(u, ui_ax_add(u, id, b, GOOME_ROLE_GROUP, s, s ? ui_shown(s) : 0, 0, GM_AXK_FOCUSABLE), UI_AXG);
+    else ui_ax_pop(u, UI_AXG, NULL);
+}
+
+static void ui_ax_expander(goome_ui *u, uint32_t id, ui_box b, const char *s, int n, int role, int open, int push)
+{
+    int i = ui_ax_add(u, id, b, role, s, n, open ? GOOME_A11Y_EXPANDED : 0, GM_AXK_PRESS | GM_AXK_EXPANDABLE | GM_AXK_FOCUSABLE);
+    if (push && open && u->ntree < UI_MAXTREE) ui_ax_push(u, i, UI_AXT);
+}
+
+static void ui_ax_progress(goome_ui *u, ui_box b, double frac, const char *s)
+{
+    int i = ui_ax_add(u, u->last_id, b, GOOME_ROLE_PROGRESS, NULL, 0, 0, GM_AXK_RANGE);
+    if (i < 0) return;
+    char t[32];
+    goome_a11y_node *d = &u->ax->n[i];
+    d->min = 0, d->max = 1, d->num = frac < 0 ? -1 : ui_clamp(frac, 0, 1);
+    if (frac >= 0) snprintf(t, sizeof(t), "%d%%", (int)(ui_clamp(frac, 0, 1) * 100 + 0.5));
+    ui_ax_val(u, i, s ? s : frac < 0 ? "" : t, -1);
+}
+
+static void ui_ax_window(goome_ui *u, uint32_t id, ui_box b, const char *t, int flags, int collapsed)
+{
+    int col = flags & GOOME_WIN_COLLAPSE;
+    int i = ui_ax_add(u, id, b, GOOME_ROLE_WINDOW, t, ui_shown(t), col && !collapsed ? GOOME_A11Y_EXPANDED : 0, col ? GM_AXK_EXPANDABLE : 0);
+    if (i >= 0 && col) u->ax->x[i].press = ui_hashi(id, 4);
+    ui_ax_push(u, i, UI_AXW);
+}
+
+static void ui_ax_menu(goome_ui *u, uint32_t id, ui_box b, const char *s, int n, int open, int push)
+{
+    int i = ui_ax_add(u, id, b, GOOME_ROLE_MENU, s, n, open ? GOOME_A11Y_EXPANDED : 0, GM_AXK_PRESS | GM_AXK_EXPANDABLE);
+    if (push) ui_ax_push(u, i, UI_AXP);
+}
+
+static void ui_ax_menuitem(goome_ui *u, uint32_t id, ui_box b, const char *s, int n, const int *checked)
+{
+    ui_ax_add(u, id, b, GOOME_ROLE_MENUITEM, s, n, checked && *checked ? GOOME_A11Y_CHECKED : 0, GM_AXK_PRESS | (checked ? GM_AXK_CHECKABLE : 0));
+}
+
+static void ui_ax_pop_node(goome_ui *u, uint32_t id, int role, const char *s, int n, int ok)
+{
+    if (!ok || !ui_ax_on(u)) return;
+    ui_ax_push(u, ui_ax_add(u, id, u->fr[u->nfr - 1].box, role, s, n, 0, 0), UI_AXP);
+}
+
+static int ui_ax_spin(goome_ui *u, uint32_t id, ui_box b, const char *s, int n, double *v, double lo, double hi, const char *fmt, int whole)
+{
+    if (!ui_ax_on(u)) return 0;
+    int ch = ui_ax_num_in(u, id, v, lo, hi);
+    if (ch && whole) *v = ui_floor(*v + 0.5);
+    char t[64];
+    ui_num_fmt(t, (int)sizeof(t), *v, fmt, whole);
+    int i = ui_ax_add(u, id, b, GOOME_ROLE_SLIDER, s, n, 0, GM_AXK_FOCUSABLE | GM_AXK_RANGE | GM_AXK_EDITABLE);
+    if (i >= 0) u->ax->n[i].num = *v, u->ax->n[i].min = lo, u->ax->n[i].max = hi;
+    ui_ax_val(u, i, t, -1);
+    return ch;
+}
+
+static int ui_ax_color(goome_ui *u, uint32_t id, ui_box b, const char *s, int n, uint32_t *argb, int open)
+{
+    if (!ui_ax_on(u)) return 0;
+    char t[64];
+    int ch = 0;
+    if (ui_ax_take(u, id, t, (int)sizeof(t))) {
+        const char *p = t[0] == '#' ? t + 1 : t;
+        uint32_t c = 0;
+        int k = 0;
+        for (; p[k] && k < 8; k++) {
+            int d = p[k] >= '0' && p[k] <= '9' ? p[k] - '0' : (p[k] | 32) >= 'a' && (p[k] | 32) <= 'f' ? (p[k] | 32) - 'a' + 10 : -1;
+            if (d < 0) break;
+            c = c << 4 | (uint32_t)d;
+        }
+        if (k == 6) c |= 0xFF000000u;
+        if ((k == 6 || k == 8) && c != *argb) *argb = c, ch = 1;
+    }
+    snprintf(t, sizeof(t), "#%08X", (unsigned)*argb);
+    int i = ui_ax_add(u, id, b, GOOME_ROLE_BUTTON, s, n, open ? GOOME_A11Y_EXPANDED : 0, GM_AXK_PRESS | GM_AXK_EXPANDABLE | GM_AXK_FOCUSABLE | GM_AXK_EDITABLE);
+    ui_ax_val(u, i, t, -1);
+    return ch;
+}
+
+static int ui_ax_edit(goome_ui *u, uint32_t id, char *buf, int cap)
+{
+    int len;
+    return ui_ax_on(u) && ui_ax_input(u, id, buf, cap, &len, 0);
+}
+
+static void ui_ax_custom(goome_ui *u, uint32_t id, ui_box b, int focusable, int *click)
+{
+    ui_axs *a = u->ax;
+    if (!a) return;
+    if (a->has_role && ui_ax_on(u)) {
+        int i = ui_ax_add(u, id, b, a->role, a->label, (int)strlen(a->label), 0, GM_AXK_PRESS | (focusable ? GM_AXK_FOCUSABLE : 0));
+        if (a->has_val) ui_ax_val(u, i, a->value, -1);
+        if (ui_ax_do(u, id, 'p')) *click = 1;
+    }
+    a->has_role = a->has_val = 0;
+}
+
 void goome_ui_pos(goome_ui *u, double x, double y)
 {
     if (!u || !u->c) return;
@@ -5541,6 +6369,7 @@ int goome_ui_custom(goome_ui *u, const char *id, double w, double h, int flags, 
         if (key == GOOME_K_ESC) ui_unfocus(u);
     }
     int right = hit && u->rpressed && u->hover_layer == u->layer && ui_in(b, u->pmx, u->pmy) && (!u->nclip || ui_in(u->clip[u->nclip - 1], u->pmx, u->pmy));
+    ui_ax_custom(u, id2, b, fo, &click);
     it->x = b.x, it->y = b.y, it->w = b.w, it->h = b.h;
     it->hovered = hov, it->pressed = press, it->held = held, it->released = rel, it->clicked = click;
     it->double_clicked = press && u->clicks == 2, it->right_clicked = right, it->focused = fo && u->focus == id2;
@@ -5601,6 +6430,56 @@ double *goome_ui_store(goome_ui *u, const char *id, int n)
     }
     k->seen = u->frame;
     return k->v;
+}
+
+static ui_st *ui_tween(goome_ui *u, const char *id, uint32_t tag, double target, double ms, int ease)
+{
+    int fresh;
+    ui_st *s = ui_get(u, ui_hashi(ui_id(u, id), tag), &fresh);
+    if (s == &u->dummy) return NULL;
+    ms = ui_ms(u, ms);
+    if (fresh || ms <= 0) {
+        s->v[0] = s->v[1] = target, s->v[2] = s->v[3] = 0, s->i[0] = ease, s->i[1] = u->frame;
+        return s;
+    }
+    if (s->i[1] != u->frame) s->v[2] += u->dt, s->i[1] = u->frame;
+    s->i[0] = ease;
+    if (target != s->v[1]) s->v[0] = s->v[4], s->v[1] = target, s->v[2] = 0, s->v[3] = ms;
+    if (s->v[2] < s->v[3]) u->anim_next = 1;
+    return s;
+}
+static int ui_tween_done(ui_st *s) { return s->v[3] <= 0 || s->v[2] >= s->v[3]; }
+
+double goome_ui_anim(goome_ui *u, const char *id, double target, double ms, int ease)
+{
+    if (!u) return target;
+    ui_st *s = ui_tween(u, id, 0x414E494Du, target, ms, ease);
+    if (!s) return target;
+    s->v[4] = ui_tween_done(s) ? s->v[1] : s->v[0] + (s->v[1] - s->v[0]) * ui_ease(u, s->i[0], s->v[2] / s->v[3]);
+    return s->v[4];
+}
+
+static uint32_t ui_mix_lin(uint32_t a, uint32_t b, double t)
+{
+    double aa = (double)(a >> 24) / 255, ba = (double)(b >> 24) / 255, oa = ui_clamp(aa + (ba - aa) * t, 0, 1);
+    uint32_t out = (uint32_t)(oa * 255 + 0.5) << 24;
+    if (oa <= 0) return 0;
+    for (int sh = 0; sh < 24; sh += 8) {
+        double x = (double)((a >> sh) & 255) / 255, y = (double)((b >> sh) & 255) / 255;
+        double lx = x * x * aa, ly = y * y * ba, l = lx + (ly - lx) * t;
+        out |= (uint32_t)(ui_sqrt(ui_clamp(l / oa, 0, 1)) * 255 + 0.5) << sh;
+    }
+    return out;
+}
+
+uint32_t goome_ui_anim_color(goome_ui *u, const char *id, uint32_t target, double ms, int ease)
+{
+    if (!u) return target;
+    ui_st *s = ui_tween(u, id, 0x414E4943u, target, ms, ease);
+    if (!s) return target;
+    uint32_t c = ui_tween_done(s) ? (uint32_t)s->v[1] : ui_mix_lin((uint32_t)s->v[0], (uint32_t)s->v[1], ui_ease(u, s->i[0], s->v[2] / s->v[3]));
+    s->v[4] = c;
+    return c;
 }
 
 goome_ui_config *goome_ui_cfg(goome_ui *u) { return u ? &u->cfg : NULL; }

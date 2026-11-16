@@ -55,9 +55,11 @@ EOF
 dbus-daemon --config-file="$fake/bus.conf" --nofork --nopidfile &
 busd=$!
 fpid=
+hpid=
 cleanup() {
   [ -n "$fpid" ] && kill "$fpid" 2>/dev/null
   kill "$busd" 2>/dev/null
+  [ -n "$hpid" ] && kill -- -"$hpid" 2>/dev/null
   true
 }
 trap cleanup EXIT
@@ -116,6 +118,50 @@ if calls closed SelectSources | head -1 | grep -q 0f1e2d3c; then ok "token from 
 else bad "token from disk not used"; fi
 if grep -A20 '"EmitClosed"' "$fake/closed.log" | grep -q '"call": "CreateSession"'; then ok "Session.Closed starts a new session"
 else bad "no new session after Session.Closed"; fi
+
+echo "== headless gnome-shell, hit rects that come after the overlay is up"
+if ! command -v gnome-shell >/dev/null || ! python3 -I -c 'from gi.repository import Gio' 2>/dev/null; then
+  echo "skip: no gnome-shell or python gi"
+else
+  hd=$(cd "$out" && pwd)/headless
+  rm -rf "$hd"
+  mkdir -p "$hd/home" "$hd/rt"
+  chmod 700 "$hd/rt"
+  cc -O1 -g -std=c99 -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -Werror -Iinclude -Isrc \
+    -o "$hd/late_hits" tests/late_hits.c build/libgoome.a || exit 1
+  setsid env -u DISPLAY -u WAYLAND_DISPLAY -u XAUTHORITY -u DBUS_SESSION_BUS_ADDRESS HOME="$hd/home" XDG_RUNTIME_DIR="$hd/rt" \
+    XDG_CONFIG_HOME="$hd/home/.config" XDG_DATA_HOME="$hd/home/.local/share" XDG_CACHE_HOME="$hd/home/.cache" \
+    PIPEWIRE_RUNTIME_DIR="$XDG_RUNTIME_DIR" XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=GNOME \
+    dbus-run-session -- bash -c 'echo "$DBUS_SESSION_BUS_ADDRESS" > "$HOME/../bus"; exec gnome-shell --headless --wayland --virtual-monitor 1280x800 --wayland-display=goome-hl' \
+    >"$hd/shell.log" 2>&1 &
+  hpid=$!
+  for _ in $(seq 100); do grep -q 'GNOME Shell started' "$hd/shell.log" 2>/dev/null && break; sleep 0.1; done
+  xdpy=$(sed -n 's/.*Using public X11 display \(:[0-9]*\).*/\1/p' "$hd/shell.log" | head -1)
+  if [ -z "$xdpy" ] || [ ! -s "$hd/bus" ]; then
+    bad "headless gnome-shell didnt come up, see $hd/shell.log"
+  else
+    sleep 2
+    hl() {
+      env DBUS_SESSION_BUS_ADDRESS="$(cat "$hd/bus")" XDG_RUNTIME_DIR="$hd/rt" DISPLAY="$xdpy" XAUTHORITY="$(ls "$hd"/rt/.mutter-Xwaylandauth.* 2>/dev/null | head -1)" \
+        WAYLAND_DISPLAY=goome-hl XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=GNOME PIPEWIRE_RUNTIME_DIR="$XDG_RUNTIME_DIR" GOOME_BACKEND=x11 "$@"
+    }
+    hl python3 -I tests/gnome_input.py key:0xff1b sleep:0.5 "run:$hd/warm.log:xev -geometry 100x100+100+100" sleep:1 >"$hd/warm.out" 2>&1
+    L=$hd/key.log
+    hl python3 -I tests/gnome_input.py "run:$hd/xev.log:stdbuf -oL xev -geometry 300x200+700+400 -event button -event focus" "wait:$hd/xev.log:^FocusIn" sleep:0.3 move:850,550 click "wait:$hd/xev.log:^ButtonPress" \
+      "run:$L:$hd/late_hits key insert" "wait:$L:^ready" sleep:0.3 move:400,260 click sleep:0.3 key:0xff63 "wait:$L:^hits on" sleep:0.5 \
+      move:405,265 click sleep:0.5 >"$hd/key.out" 2>&1
+    if grep -q '^hotkey id 1$' "$L"; then ok "hotkey reaches the overlay"; else bad "hotkey never came: $(tr '\n' ' ' <"$L")"; fi
+    if grep -q '^down 400,260' "$L"; then bad "overlay took a click before it had hit rects"; else ok "no hit rects, clicks go through"; fi
+    if grep -q '^down 405,265$' "$L"; then ok "hotkey turns the hit rects on and clicks land"; else bad "click after the hotkey got lost: $(tr '\n' ' ' <"$L")"; fi
+    L=$hd/late.log
+    hl python3 -I tests/gnome_input.py "run:$L:$hd/late_hits 1500" "wait:$L:^ready" sleep:0.2 move:400,260 "wait:$L:^hits on" sleep:0.5 \
+      move:405,265 click sleep:0.5 >"$hd/late.out" 2>&1
+    if grep -q '^down 405,265$' "$L"; then ok "shown before its hit rects, clicks land once they come"; else bad "late hit rects never took a click: $(tr '\n' ' ' <"$L")"; fi
+  fi
+  kill -- -"$hpid" 2>/dev/null
+  wait "$hpid" 2>/dev/null
+  hpid=
+fi
 
 echo "== $([ $rc = 0 ] && echo all passed || echo SOME FAILED)"
 exit $rc

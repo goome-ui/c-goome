@@ -71,12 +71,17 @@ struct goome {
     int cursor;
     char *clip;
     char drop[4096];
+    char *ime_q, *ime_text;
+    size_t ime_qlen, ime_qcap;
+    int ime_cur, ime_on;
+    goome_rect ime_caret;
     int nhit;
     goome_rect *hit;
     goome_canvas *frame;
     goome_canvas *dcv;
     uint32_t *dpx;
     int dw, dh, dirty, dx0, dy0, dx1, dy1;
+    struct gm_ax_s *ax;
 };
 
 int gm_push(struct goome *g, const goome_event *e);
@@ -90,6 +95,52 @@ void gm_canvas_clear(goome_canvas *c);
 const char *gm_env(const char *name);
 int gm_num(const char **p); // hand rolled, glibc 2.38 redirects the libc ones
 
+#ifndef GOOME_NO_DRAW
+typedef struct {
+    int lo, hi, rtl;
+    double x0, x1;
+} gm_tc;
+int gm_text_rtl(goome_font *f, const char *s, int n);
+int gm_text_layout(goome_font *f, double size, const char *s, int n, gm_tc **out);
+int gm_text_next(const char *s, int i, int n);
+int gm_text_prev(const char *s, int i);
+#endif
+
+#ifndef GOOME_NO_UI
+enum { GM_AXK_EXPANDABLE = 1, GM_AXK_CHECKABLE = 2, GM_AXK_FOCUSABLE = 4, GM_AXK_EDITABLE = 8, GM_AXK_MULTILINE = 16, GM_AXK_PASSWORD = 32, GM_AXK_RANGE = 64, GM_AXK_PRESS = 128, GM_AXK_SELECTABLE = 256, GM_AXK_HIDDEN = 512 };
+typedef struct {
+    uint32_t press;
+    int kind, text, ntext;
+} gm_ax_x;
+typedef struct gm_ax_s {
+    goome_a11y_node *n, *pn;
+    gm_ax_x *x, *px;
+    char *text, *ptext;
+    int count, pcount, cap, pcap, ntext, tcap, pntext, ptcap, active, pactive, synced, serial;
+    uint32_t *hash;
+    int hcap;
+    char *long_text;
+    uint32_t long_id;
+    void *plat;
+    int plat_state;
+} gm_ax;
+void gm_ax_sync(struct goome *g, const goome_a11y_node *n, const gm_ax_x *x, int count, const char *text, int ntext, int active);
+int gm_ax_find(const gm_ax *a, uint32_t id);
+int gm_ax_act(struct goome *g, uint32_t id, const char *verb, const char *text);
+const char *gm_ax_long(struct goome *g, uint32_t id);
+const char *gm_ax_str(const gm_ax *a, int i, int *len);
+int gm_ax_chars(const char *s, int n);
+int gm_ax_bytes(const char *s, int n, int chars);
+enum { GM_AXE_FOCUS = 1, GM_AXE_VALUE, GM_AXE_NAME, GM_AXE_STATE, GM_AXE_ADD, GM_AXE_REMOVE, GM_AXE_ACTIVE, GM_AXE_TEXT, GM_AXE_CARET };
+#endif
+int gm_ax_pump(struct goome *g);
+#if defined(__APPLE__) && !defined(GOOME_NO_UI)
+void *gm_mac_view(struct goome *g);
+#endif
+#if defined(_WIN32) && !defined(GOOME_NO_UI)
+int gm_uia_obj(struct goome *g, void *hwnd, uintptr_t wp, intptr_t lp, intptr_t *out);
+#endif
+void gm_ax_close(struct goome *g);
 const gm_cap *gm_cap_test(void);
 const gm_ov *gm_ov_test(void);
 const gm_ov *gm_ov_offscreen(void);
@@ -97,12 +148,15 @@ int gm_of_resize(struct goome *g, int w, int h, double scale);
 int gm_clip_keep(struct goome *g, const char *s);
 int gm_clip_copy(struct goome *g, char **out);
 void gm_drop(struct goome *g, double x, double y, const char *path);
+int gm_ime_push(struct goome *g, int type, const char *s, int n, int cursor);
 #if defined(_WIN32)
 const gm_cap *gm_cap_win32(void);
 const gm_ov *gm_ov_win32(void);
+int gm_ime_win32(struct goome *g, int on, const goome_rect *caret);
 #elif defined(__APPLE__)
 const gm_cap *gm_cap_macos(void);
 const gm_ov *gm_ov_macos(void);
+int gm_ime_macos(struct goome *g, int on, const goome_rect *caret);
 #elif defined(__linux__) || defined(__FreeBSD__)
 #define GM_LINUX 1
 const gm_ov *gm_ov_wayland(void);
@@ -111,6 +165,8 @@ const gm_ov *gm_ov_x11(void);
 const gm_cap *gm_cap_x11(void);
 const gm_cap *gm_cap_mutter(void);
 const gm_cap *gm_cap_portal(void);
+int gm_ime_x11(struct goome *g, int on, const goome_rect *caret);
+int gm_ime_wayland(struct goome *g, int on, const goome_rect *caret);
 int gm_uri_paths(const char *s, size_t n, char **out);
 void gm_drop_next(struct goome *g, const char *drops, int *off, int len, double x, double y);
 #endif

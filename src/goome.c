@@ -440,12 +440,14 @@ void goome_close(goome *g)
     if (!g) return;
     if (g->cap && g->cap_state == 1 && g->cap->close) g->cap->close(g);
     if (g->ov && g->ov->grab && g->grab_req) g->ov->grab(g, 0);
+    gm_ax_close(g);
     if (g->ov) g->ov->close(g);
 #ifndef _WIN32
     if (g->ctl_fd >= 0) close(g->ctl_fd);
 #endif
     free(g->clip);
     free(g->hit);
+    free(g->ime_q), free(g->ime_text);
     free(g);
 }
 
@@ -532,21 +534,26 @@ int goome_end(goome *g, goome_canvas *c, const goome_rect *hits, int n)
     return g->ov->commit(g, c->mon, c, hits, n);
 }
 
+static void gm_ime_take(goome *g, goome_event *ev);
+
 int goome_poll(goome *g, goome_event *ev, int timeout_ms)
 {
     if (!g || !ev) return GOOME_EARG;
     long end = goome_now_ms() + (timeout_ms > 0 ? timeout_ms : 0);
     for (;;) {
         gm_ctl_read(g);
+        int axw = gm_ax_pump(g);
         if (g->qlen) {
             *ev = g->q[g->qhead];
             g->qhead = (g->qhead + 1) % GM_QLEN, g->qlen--;
+            if (ev->type == GOOME_TEXT || ev->type == GOOME_PREEDIT) gm_ime_take(g, ev);
             return 1;
         }
         if (!g->ov->wait) return 0;
         long left = end - goome_now_ms();
         if (left < 0) left = 0;
         if (g->ctl_fd >= 0 && left > 100) left = 100;
+        if (axw >= 0 && left > axw) left = axw;
         int r = g->ov->wait(g, (int)left);
         if (r < 0) {
             goome_event q = {.type = GOOME_QUIT};
@@ -725,6 +732,12 @@ const char *goome_drop_path(goome *g) { return g && g->drop[0] ? g->drop : NULL;
 int goome_push(goome *g, const goome_event *ev)
 {
     if (!g || !ev) return GOOME_EARG;
+    if (ev->type == GOOME_TEXT || ev->type == GOOME_PREEDIT) {
+        const char *t = ev->msg[0] ? ev->msg : ev->text;
+        int cap = ev->msg[0] ? (int)sizeof(ev->msg) : (int)sizeof(ev->text), n = 0;
+        while (n < cap && t[n]) n++;
+        return gm_ime_push(g, ev->type, t, n, ev->id);
+    }
     return gm_push(g, ev) ? GOOME_OK : gm_fail(g, GOOME_EAGAIN, "the event queue is full");
 }
 
@@ -830,4 +843,69 @@ int goome_hit(goome *g, double x, double y)
         if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) return 1;
     }
     return 0;
+}
+
+int gm_ime_push(goome *g, int type, const char *s, int n, int cursor)
+{
+    if (n < 0) n = (int)strlen(s);
+    if (g->ime_qlen + (size_t)n + 1 > g->ime_qcap) {
+        size_t cap = (g->ime_qlen + (size_t)n + 1) * 2;
+        char *q = realloc(g->ime_q, cap);
+        if (!q) return gm_fail(g, GOOME_ENOMEM, "no memory for ime text");
+        g->ime_q = q, g->ime_qcap = cap;
+    }
+    goome_event e;
+    memset(&e, 0, sizeof(e));
+    e.type = type, e.id = cursor < 0 ? 0 : cursor > n ? n : cursor;
+    int m = n < (int)sizeof(e.msg) - 1 ? n : (int)sizeof(e.msg) - 1;
+    if (m < n)
+        while (m > 0 && ((unsigned char)s[m] & 0xC0) == 0x80) m--;
+    memcpy(e.msg, s, (size_t)m);
+    while (e.id > 0 && e.id < n && ((unsigned char)s[e.id] & 0xC0) == 0x80) e.id--;
+    if (!gm_push(g, &e)) return gm_fail(g, GOOME_EAGAIN, "the event queue is full");
+    memcpy(g->ime_q + g->ime_qlen, s, (size_t)n);
+    g->ime_q[g->ime_qlen + (size_t)n] = 0;
+    g->ime_qlen += (size_t)n + 1;
+    return GOOME_OK;
+}
+
+static void gm_ime_take(goome *g, goome_event *ev)
+{
+    size_t n = g->ime_qlen ? strlen(g->ime_q) : 0;
+    char *t = malloc(n + 1);
+    if (t) {
+        if (n) memcpy(t, g->ime_q, n);
+        t[n] = 0;
+        free(g->ime_text);
+        g->ime_text = t;
+    }
+    if (g->ime_qlen) {
+        g->ime_qlen -= n + 1;
+        memmove(g->ime_q, g->ime_q + n + 1, g->ime_qlen);
+    }
+    if (ev->type == GOOME_PREEDIT) g->ime_cur = ev->id;
+}
+
+const char *goome_event_text(goome *g) { return g && g->ime_text ? g->ime_text : ""; }
+int goome_preedit_cursor(goome *g) { return g ? g->ime_cur : 0; }
+
+int goome_text_input(goome *g, int on, const goome_rect *caret)
+{
+    if (!g) return GOOME_EARG;
+    on = !!on;
+    goome_rect r = caret ? *caret : g->ime_caret;
+    if (r.w < 1) r.w = 1;
+    if (r.h < 1) r.h = 1;
+    g->ime_on = on, g->ime_caret = r;
+    const char *n = g->ov ? g->ov->name : "";
+    if (!strcmp(n, "test") || !strcmp(n, "offscreen")) return GOOME_OK;
+#if defined(_WIN32)
+    if (!strcmp(n, "win32")) return gm_ime_win32(g, on, &r);
+#elif defined(__APPLE__)
+    if (!strcmp(n, "macos")) return gm_ime_macos(g, on, &r);
+#elif defined(GM_LINUX)
+    if (!strcmp(n, "x11")) return gm_ime_x11(g, on, &r);
+    if (!strcmp(n, "wayland")) return gm_ime_wayland(g, on, &r);
+#endif
+    return on ? gm_fail(g, GOOME_ENOTSUP, "%s has no ime support", n) : GOOME_OK;
 }

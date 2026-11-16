@@ -30,7 +30,7 @@ add_custom_target(goome_single
   COMMENT "remaking goome.h")
 
 if(GOOME_EXAMPLES)
-  foreach(ex hello grab ui offscreen app_ui app widgets custom skinned anything)
+  foreach(ex hello grab ui offscreen app_ui app widgets custom skinned anything anim text)
     add_executable(${ex} examples/${ex}.c)
     target_link_libraries(${ex} PRIVATE goome)
   endforeach()

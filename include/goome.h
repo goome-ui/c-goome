@@ -20,7 +20,7 @@
 extern "C" {
 #endif
 
-#define GOOME_VERSION "0.4.0"
+#define GOOME_VERSION "0.5.0"
 
 typedef struct goome goome;
 
@@ -112,6 +112,8 @@ enum {
     GOOME_CLOSE, // window close button / alt-f4 / cmd-w, the app decides
     GOOME_FOCUS, // id = 1 gained, 0 lost
     GOOME_DROP,  // a file dropped on the window, msg = path (cut at 63 bytes, goome_drop_path has all of it), x,y = where
+    GOOME_TEXT,    // an ime, dead key or compose finished some text, msg = it (cut at 63 bytes, goome_event_text has all of it)
+    GOOME_PREEDIT, // the text being composed changed, msg = it, id = caret byte offset in it. empty = composing ended
 };
 
 enum {
@@ -191,6 +193,9 @@ int goome_cursor_shape(goome *g); // last one asked for, offscreen embedders rea
 int goome_clipboard_set(goome *g, const char *utf8);
 int goome_clipboard_get(goome *g, char *buf, int cap); // full length (can be > cap-1, buf gets cut + nul), <0 error. can block ~250ms on x11/wayland
 const char *goome_drop_path(goome *g); // full path of the last GOOME_DROP, good until the next poll
+const char *goome_event_text(goome *g); // full utf-8 of the last GOOME_TEXT / GOOME_PREEDIT, good until the next poll
+int goome_preedit_cursor(goome *g); // byte offset of the caret in the last preedit text
+int goome_text_input(goome *g, int on, const goome_rect *caret); // ime on/off, caret (logical) is where the candidate window goes
 
 int goome_push(goome *g, const goome_event *ev); // queue an event, any mode
 int goome_resize(goome *g, int w, int h, double scale); // offscreen only
@@ -260,6 +265,9 @@ void goome_font_free(goome_font *f);
 double goome_text(goome_canvas *c, goome_font *f, double size, double x, double y, const char *utf8, uint32_t argb); // y = top, NULL font = built in
 double goome_text_measure(goome_font *f, double size, const char *utf8, double *height);
 double goome_text_line_height(goome_font *f, double size);
+void goome_font_fallback(goome_font *f, goome_font *fallback); // tried in order for chars f doesnt have, f doesnt free it. goome_font_system adds the emoji font by itself
+enum { GOOME_DIR_AUTO, GOOME_DIR_LTR, GOOME_DIR_RTL };
+void goome_text_dir(int dir); // paragraph direction for all text, AUTO = from the first strong letter of each line
 #endif
 
 #ifndef GOOME_NO_UI
@@ -413,7 +421,10 @@ enum {
     GOOME_S_COUNT
 };
 enum { GOOME_ALIGN_AUTO, GOOME_ALIGN_LEFT, GOOME_ALIGN_CENTER, GOOME_ALIGN_RIGHT };
-enum { GOOME_EASE_SMOOTH, GOOME_EASE_LINEAR, GOOME_EASE_OUT, GOOME_EASE_IN_OUT, GOOME_EASE_BACK, GOOME_EASE_CUSTOM };
+enum { GOOME_EASE_SMOOTH, GOOME_EASE_LINEAR, GOOME_EASE_OUT, GOOME_EASE_IN_OUT, GOOME_EASE_BACK, GOOME_EASE_CUSTOM, GOOME_EASE_IN, GOOME_EASE_SPRING, GOOME_EASE_BOUNCE };
+double goome_ease(int ease, double t);
+double goome_ui_anim(goome_ui *u, const char *id, double target, double ms, int ease);
+uint32_t goome_ui_anim_color(goome_ui *u, const char *id, uint32_t target, double ms, int ease);
 enum {
     GOOME_SKIN_BUTTON, GOOME_SKIN_PANEL, GOOME_SKIN_INPUT,
     GOOME_SKIN_CHECKBOX, GOOME_SKIN_RADIO, GOOME_SKIN_TOGGLE, GOOME_SKIN_SLIDER_TRACK, GOOME_SKIN_SLIDER_FILL, GOOME_SKIN_SCROLLBAR,
@@ -473,6 +484,25 @@ typedef struct {
 goome_ui_config *goome_ui_cfg(goome_ui *u);
 void goome_ui_config_default(goome_ui_config *c);
 int goome_ui_bind(goome_ui *u, int act, const char *combos);
+
+enum {
+    GOOME_ROLE_NONE, GOOME_ROLE_WINDOW, GOOME_ROLE_BUTTON, GOOME_ROLE_CHECKBOX, GOOME_ROLE_RADIO, GOOME_ROLE_SLIDER, GOOME_ROLE_TEXT,
+    GOOME_ROLE_INPUT, GOOME_ROLE_COMBO, GOOME_ROLE_LIST, GOOME_ROLE_ITEM, GOOME_ROLE_TAB, GOOME_ROLE_MENU, GOOME_ROLE_MENUITEM,
+    GOOME_ROLE_TABLE, GOOME_ROLE_TREE, GOOME_ROLE_PROGRESS, GOOME_ROLE_IMAGE, GOOME_ROLE_GROUP, GOOME_ROLE_DIALOG,
+};
+enum { GOOME_A11Y_FOCUSED = 1, GOOME_A11Y_CHECKED = 2, GOOME_A11Y_DISABLED = 4, GOOME_A11Y_EXPANDED = 8, GOOME_A11Y_SELECTED = 16 };
+typedef struct {
+    int role, parent, states;
+    double x, y, w, h;
+    char label[96], value[64];
+    uint32_t id;
+    double num, min, max;
+    int caret;
+} goome_a11y_node;
+void goome_ui_a11y(goome_ui *u, int on);
+void goome_ui_a11y_role(goome_ui *u, int role, const char *label);
+void goome_ui_a11y_value(goome_ui *u, const char *value);
+int goome_a11y_tree(goome_ui *u, goome_a11y_node *out, int max);
 #endif
 
 #ifdef __cplusplus

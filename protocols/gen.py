@@ -12,7 +12,7 @@ keep = {"wl_display", "wl_registry", "wl_callback", "wl_compositor", "wl_shm_poo
         "wl_data_source", "wl_data_offer"}
 xmls = [core] + [str(here / n) for n in ("wlr-layer-shell-unstable-v1.xml", "wlr-screencopy-unstable-v1.xml", "xdg-output-unstable-v1.xml",
                                          "xdg-shell.xml", "xdg-decoration-unstable-v1.xml", "cursor-shape-v1.xml", "fractional-scale-v1.xml",
-                                         "viewporter.xml")]
+                                         "viewporter.xml", "text-input-unstable-v3.xml")]
 stubs = ["zwp_tablet_tool_v2"]
 protos = []
 

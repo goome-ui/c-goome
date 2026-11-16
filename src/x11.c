@@ -3,6 +3,7 @@
 #if defined(GM_LINUX)
 
 #include <dlfcn.h>
+#include <locale.h>
 #include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -424,7 +425,7 @@ static struct {
     x11_image *img;
     uint32_t *buf;
     int w, h, wh, scr;
-    int composited, mapped, shaped;
+    int composited, mapped, shaped, dry;
     x11_box at;
     int rr_base;
     long checked, empty_at;
@@ -568,6 +569,26 @@ static void x11_ov_close(goome *g);
 static int x11_win_open(goome *g);
 static const gm_ov x11_wov;
 
+static x11_xid x11_ov_win(goome *g)
+{
+    x11_winattr a;
+    memset(&a, 0, sizeof(a));
+    a.override_redirect = 1;
+    a.colormap = x11.cmap;
+    x11_xid w = X11.CreateWindow(x11.dpy, x11.root, 0, 0, x11.w > 0 ? (unsigned)x11.w : 1, x11.wh > 0 ? (unsigned)x11.wh : 1, 0, 32, X11_INPUTOUTPUT,
+                                 x11.visual, X11_CW_OVERRIDE | X11_CW_COLORMAP | X11_CW_BACKPIXEL | X11_CW_BORDERPIXEL, &a);
+    X11.StoreName(x11.dpy, w, g->title);
+    x11_xid type = X11.InternAtom(x11.dpy, "_NET_WM_WINDOW_TYPE", 0), notif = X11.InternAtom(x11.dpy, "_NET_WM_WINDOW_TYPE_NOTIFICATION", 0);
+    X11.ChangeProperty(x11.dpy, w, type, X11_XA_ATOM, 32, 0, (unsigned char *)&notif, 1);
+    long keep = 2; // never unredirect us, xfwm did and the screen went black
+    X11.ChangeProperty(x11.dpy, w, X11.InternAtom(x11.dpy, "_NET_WM_BYPASS_COMPOSITOR", 0), X11_XA_CARDINAL, 32, 0, (unsigned char *)&keep, 1);
+    x11_xid empty = X11.FixesCreateRegion(x11.dpy, NULL, 0); // clicks go through until the first commit
+    X11.FixesSetWindowShapeRegion(x11.dpy, w, X11_SHAPE_INPUT, 0, 0, empty);
+    X11.FixesDestroyRegion(x11.dpy, empty);
+    X11.SelectInput(x11.dpy, w, X11_EVMASK);
+    return w;
+}
+
 static int x11_ov_open(goome *g)
 {
     if (g->opts.mode == GOOME_MODE_WINDOW) {
@@ -609,21 +630,8 @@ static int x11_ov_open(goome *g)
         x11.rr_base = ev;
         X11.RRSelectInput(x11.dpy, x11.root, X11_RR_MASK);
     }
-    x11_winattr a;
-    memset(&a, 0, sizeof(a));
-    a.override_redirect = 1;
-    a.colormap = x11.cmap = X11.CreateColormap(x11.dpy, x11.root, vi.visual, 0);
-    x11.win = X11.CreateWindow(x11.dpy, x11.root, 0, 0, 1, 1, 0, 32, X11_INPUTOUTPUT, vi.visual,
-                               X11_CW_OVERRIDE | X11_CW_COLORMAP | X11_CW_BACKPIXEL | X11_CW_BORDERPIXEL, &a);
-    X11.StoreName(x11.dpy, x11.win, g->title);
-    x11_xid type = X11.InternAtom(x11.dpy, "_NET_WM_WINDOW_TYPE", 0), notif = X11.InternAtom(x11.dpy, "_NET_WM_WINDOW_TYPE_NOTIFICATION", 0);
-    X11.ChangeProperty(x11.dpy, x11.win, type, X11_XA_ATOM, 32, 0, (unsigned char *)&notif, 1);
-    long keep = 2; // never unredirect us, xfwm did and the screen went black
-    X11.ChangeProperty(x11.dpy, x11.win, X11.InternAtom(x11.dpy, "_NET_WM_BYPASS_COMPOSITOR", 0), X11_XA_CARDINAL, 32, 0, (unsigned char *)&keep, 1);
-    x11_xid empty = X11.FixesCreateRegion(x11.dpy, NULL, 0); // clicks go through until the first commit
-    X11.FixesSetWindowShapeRegion(x11.dpy, x11.win, X11_SHAPE_INPUT, 0, 0, empty);
-    X11.FixesDestroyRegion(x11.dpy, empty);
-    X11.SelectInput(x11.dpy, x11.win, X11_EVMASK);
+    x11.cmap = X11.CreateColormap(x11.dpy, x11.root, vi.visual, 0);
+    x11.win = x11_ov_win(g);
     x11.gc = X11.CreateGC(x11.dpy, x11.win, 0, NULL);
     X11.SetGraphicsExposures(x11.dpy, x11.gc, 0);
     x11.checked = goome_now_ms();
@@ -759,6 +767,16 @@ static int x11_ov_commit(goome *g, int mon, goome_canvas *c, const goome_rect *h
     x11.at = empty ? (x11_box){0, 0, 0, 0} : u;
     if (empty && !x11.empty_at) x11.empty_at = goome_now_ms();
     if (!empty) x11.empty_at = 0;
+    int nh = 0;
+    for (int i = 0; i < x11.nmon; i++) nh += x11.nhits[i];
+    x11_xid old = 0;
+    if (x11.mapped && x11.dry && nh && !empty) {
+        old = x11.win;
+        x11.win = x11_ov_win(g);
+        x11.mapped = 0;
+        if (x11.pix) X11.FreePixmap(x11.dpy, x11.pix), x11.pix = 0;
+    }
+    if (!x11.mapped) x11.dry = !nh;
     x11_input_shape();
     if (!x11.composited) x11_bounding_shape(); // no compositor = no alpha, cut the window down to the solid px
     int d0, e0, d1, e1;
@@ -767,6 +785,8 @@ static int x11_ov_commit(goome *g, int mon, goome_canvas *c, const goome_rect *h
         x11_put(u.x0, u.y0, u.x1, u.y1, 0);
         X11.MapRaised(x11.dpy, x11.win), x11.mapped = 1;
         X11.CopyArea(x11.dpy, x11.pix, x11.win, x11.gc, u.x0, u.y0, (unsigned)(u.x1 - u.x0), (unsigned)(u.y1 - u.y0), u.x0, u.y0);
+        if (old && x11.grab) X11.GrabPointer(x11.dpy, x11.win, 0, 4 | 8 | 64, X11_GRAB_ASYNC, X11_GRAB_ASYNC, 0, 0, 0);
+        if (old) X11.DestroyWindow(x11.dpy, old);
     } else if (gm_canvas_damage(c, &d0, &e0, &d1, &e1))
         x11_put(d0 + ox, e0 + oy, d1 + ox, e1 + oy, 1);
     X11.RaiseWindow(x11.dpy, x11.win);
@@ -791,6 +811,10 @@ static int x11_utf8(char *out, unsigned cp)
     return 0;
 }
 
+static int x11i_lookup(goome *g, x11_input_ev *k);
+static int x11i_filter(x11_event *ev);
+static void x11i_drop(goome *g);
+
 static void x11_key(goome *g, x11_input_ev *k, const x11_grab *gr, int ngr, int keys)
 {
     unsigned want = k->state & (X11_SHIFT | X11_CONTROL | X11_MOD1 | X11_MOD4);
@@ -803,6 +827,7 @@ static void x11_key(goome *g, x11_input_ev *k, const x11_grab *gr, int ngr, int 
             return;
         }
     if (!keys) return;
+    if (x11i_lookup(g, k)) return;
     char buf[16] = {0};
     unsigned long sym = 0;
     int n = X11.LookupString(k, buf, (int)sizeof(buf) - 1, &sym, NULL);
@@ -882,6 +907,7 @@ static int x11_ov_wait(goome *g, int ms)
         while (X11.Pending(x11.dpy)) {
             x11_event ev;
             X11.NextEvent(x11.dpy, &ev);
+            if (x11i_filter(&ev)) continue;
             x11_handle(g, &ev);
         }
         x11_check(g, 0);
@@ -1646,6 +1672,7 @@ static int x11_win_pump(goome *g, x11_win *w)
     while (X11.Pending(w->dpy)) {
         x11_event ev;
         X11.NextEvent(w->dpy, &ev);
+        if (x11i_filter(&ev)) continue;
         x11_win_handle(g, w, &ev);
     }
     return 0;
@@ -1848,6 +1875,7 @@ static void x11_win_close(goome *g)
 {
     x11_win *w = g->ov_priv;
     if (!w) return;
+    x11i_drop(g);
     if (w->dpy) {
         x11_ungrab_keys(w->dpy, w->root, w->grabbed, w->ngrabbed);
         x11_win_free_buf(w);
@@ -1871,6 +1899,7 @@ static void x11_ov_close(goome *g)
         x11_win_close(g);
         return;
     }
+    x11i_drop(g);
     if (x11.dpy) {
         x11_ungrab_keys(x11.dpy, x11.root, x11.grabbed, x11.ngrabbed);
         if (x11.kb) X11.UngrabKeyboard(x11.dpy, 0);
@@ -1893,6 +1922,335 @@ static void x11_ov_close(goome *g)
 static const gm_ov x11_ov = {"x11", x11_ov_open, x11_ov_canvas, x11_ov_commit, x11_ov_wait, x11_ov_pointer, x11_ov_keyboard, x11_ov_hotkeys,
                              x11_ov_close, GOOME_CAP_GLOBAL_POINTER | GOOME_CAP_KEYBOARD | GOOME_CAP_HOTKEYS | GOOME_CAP_GRAB, NULL, NULL, NULL, NULL, x11_ov_grab};
 const gm_ov *gm_ov_x11(void) { return &x11_ov; }
+
+typedef struct {
+    short x, y;
+} x11i_point;
+
+typedef struct {
+    void *data;
+    void (*fn)(void);
+} x11i_cb;
+
+typedef struct {
+    unsigned short length;
+    unsigned long *feedback;
+    int wide;
+    union {
+        char *mb;
+        int32_t *wc;
+    } s;
+} x11i_text;
+
+typedef struct {
+    int caret, first, len;
+    x11i_text *text;
+} x11i_draw;
+
+typedef struct {
+    int position, direction, style;
+} x11i_caret;
+
+typedef struct {
+    unsigned short n;
+    unsigned long *styles;
+} x11i_styles;
+
+static struct {
+    int tried, ok;
+    char *(*SetLocaleModifiers)(const char *);
+    int (*SupportsLocale)(void);
+    void *(*OpenIM)(x11_dpy *, void *, char *, char *);
+    int (*CloseIM)(void *);
+    char *(*GetIMValues)(void *, ...);
+    void *(*CreateIC)(void *, ...);
+    void (*DestroyIC)(void *);
+    void (*SetICFocus)(void *);
+    void (*UnsetICFocus)(void *);
+    char *(*SetICValues)(void *, ...);
+    char *(*GetICValues)(void *, ...);
+    void *(*VaCreateNestedList)(int, ...);
+    int (*utf8LookupString)(void *, x11_input_ev *, char *, int, unsigned long *, int *);
+    int (*FilterEvent)(x11_event *, x11_xid);
+    char *(*utf8ResetIC)(void *);
+} XI;
+
+static struct {
+    goome *g;
+    x11_dpy *dpy;
+    x11_xid win;
+    void *im, *ic;
+    unsigned long style;
+    int focused, failed, npre, pcur, sent;
+    uint32_t pre[256];
+    x11i_cb cbs[4];
+} x11i;
+
+enum { X11I_PRE_CALLBACKS = 2, X11I_PRE_POSITION = 4, X11I_PRE_NOTHING = 8, X11I_ST_NOTHING = 0x400, X11I_ST_NONE = 0x800 };
+
+static int x11i_load(void)
+{
+    if (XI.tried) return XI.ok;
+    XI.tried = 1;
+    void *xl = dlopen("libX11.so.6", RTLD_NOW | RTLD_GLOBAL);
+    if (!xl) return 0;
+    int ok = 1;
+#define X11I_L(f) ok &= (*(void **)&XI.f = dlsym(xl, "X" #f)) != NULL
+    X11I_L(SetLocaleModifiers);
+    X11I_L(SupportsLocale);
+    X11I_L(OpenIM);
+    X11I_L(CloseIM);
+    X11I_L(GetIMValues);
+    X11I_L(CreateIC);
+    X11I_L(DestroyIC);
+    X11I_L(SetICFocus);
+    X11I_L(UnsetICFocus);
+    X11I_L(SetICValues);
+    X11I_L(GetICValues);
+    X11I_L(VaCreateNestedList);
+    X11I_L(utf8LookupString);
+    X11I_L(FilterEvent);
+    X11I_L(utf8ResetIC);
+#undef X11I_L
+    return XI.ok = ok;
+}
+
+static void x11i_send_pre(void)
+{
+    char out[256 * 4 + 1];
+    int n = 0, cur = 0;
+    for (int i = 0; i < x11i.npre; i++) {
+        if (i == x11i.pcur) cur = n;
+        n += x11_utf8(out + n, x11i.pre[i]);
+    }
+    if (x11i.pcur >= x11i.npre) cur = n;
+    out[n] = 0;
+    if (x11i.g && (n || x11i.sent)) gm_ime_push(x11i.g, GOOME_PREEDIT, out, n, cur);
+    x11i.sent = n > 0;
+}
+
+static int x11i_pre_start(void *ic, void *data, void *call)
+{
+    x11i.npre = x11i.pcur = 0;
+    return -1;
+}
+
+static void x11i_pre_done(void *ic, void *data, void *call)
+{
+    x11i.npre = x11i.pcur = 0;
+    x11i_send_pre();
+}
+
+static int x11i_u8(const unsigned char *s, int *i, int n)
+{
+    int c = s[(*i)++], more = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : c >= 0xC0 ? 1 : 0;
+    c &= more == 3 ? 7 : more == 2 ? 15 : more == 1 ? 31 : 127;
+    while (more-- > 0 && *i < n && (s[*i] & 0xC0) == 0x80) c = c << 6 | (s[(*i)++] & 63);
+    return c;
+}
+
+static void x11i_pre_draw(void *ic, void *data, x11i_draw *d)
+{
+    int first = d->first < 0 ? 0 : d->first > x11i.npre ? x11i.npre : d->first, del = d->len < 0 ? 0 : d->len;
+    if (first + del > x11i.npre) del = x11i.npre - first;
+    uint32_t ins[256];
+    int ni = 0;
+    if (d->text && d->text->length) {
+        if (d->text->wide && d->text->s.wc)
+            for (int i = 0; i < d->text->length && ni < 256; i++) ins[ni++] = (uint32_t)d->text->s.wc[i];
+        else if (d->text->s.mb) {
+            const unsigned char *m = (const unsigned char *)d->text->s.mb;
+            int n = (int)strlen(d->text->s.mb), i = 0;
+            while (i < n && ni < 256 && ni < d->text->length) ins[ni++] = (uint32_t)x11i_u8(m, &i, n);
+        }
+    }
+    if (x11i.npre - del + ni > 256) ni = 256 - (x11i.npre - del);
+    memmove(x11i.pre + first + ni, x11i.pre + first + del, sizeof(uint32_t) * (size_t)(x11i.npre - first - del));
+    memcpy(x11i.pre + first, ins, sizeof(uint32_t) * (size_t)ni);
+    x11i.npre += ni - del;
+    x11i.pcur = d->caret < 0 ? 0 : d->caret > x11i.npre ? x11i.npre : d->caret;
+    x11i_send_pre();
+}
+
+static void x11i_pre_caret(void *ic, void *data, x11i_caret *c)
+{
+    int p = x11i.pcur;
+    if (c->direction == 0) p++;
+    else if (c->direction == 1) p--;
+    else if (c->direction == 8) p = 0;
+    else if (c->direction == 9) p = x11i.npre;
+    else if (c->direction == 10) p = c->position;
+    x11i.pcur = p < 0 ? 0 : p > x11i.npre ? x11i.npre : p;
+    c->position = x11i.pcur;
+    x11i_send_pre();
+}
+
+static void x11i_drop(goome *g)
+{
+    if (x11i.g != g) return;
+    if (x11i.ic) XI.DestroyIC(x11i.ic);
+    if (x11i.im) XI.CloseIM(x11i.im);
+    memset(&x11i, 0, sizeof(x11i));
+}
+
+static int x11i_filter(x11_event *ev)
+{
+    if (!x11i.ic) return 0;
+    return XI.FilterEvent(ev, 0) != 0;
+}
+
+static void *x11i_open_im(x11_dpy *d)
+{
+    char keep[128];
+    const char *was = setlocale(LC_CTYPE, NULL);
+    snprintf(keep, sizeof(keep), "%s", was ? was : "C");
+    if (!strcmp(keep, "C") || !strcmp(keep, "POSIX")) {
+        const char *now = setlocale(LC_CTYPE, "");
+        if (!now || !strcmp(now, "C") || !strcmp(now, "POSIX")) setlocale(LC_CTYPE, "C.UTF-8");
+    }
+    void *im = NULL;
+    if (XI.SupportsLocale()) {
+        if (XI.SetLocaleModifiers("")) im = XI.OpenIM(d, NULL, NULL, NULL);
+        if (!im && XI.SetLocaleModifiers("@im=none")) im = XI.OpenIM(d, NULL, NULL, NULL);
+    }
+    setlocale(LC_CTYPE, keep);
+    return im;
+}
+
+static unsigned long x11i_pick(void *im)
+{
+    x11i_styles *st = NULL;
+    unsigned long best = 0;
+    int rank = 0;
+    if (XI.GetIMValues(im, "queryInputStyle", &st, NULL) || !st) return 0;
+    for (int i = 0; i < st->n; i++) {
+        unsigned long v = st->styles[i];
+        if (!(v & (X11I_ST_NOTHING | X11I_ST_NONE))) continue;
+        int r = (v & X11I_PRE_CALLBACKS) ? 4 : (v & X11I_PRE_POSITION) ? 3 : (v & X11I_PRE_NOTHING) ? 2 : (v & 0x10) ? 1 : 0;
+        if (r > rank) rank = r, best = v;
+    }
+    X11.Free(st);
+    return best;
+}
+
+static int x11i_make(goome *g, x11_dpy *d, x11_xid win, long mask)
+{
+    if (!x11i_load()) return gm_fail(g, GOOME_ENOTSUP, "libX11 has no XIM functions");
+    if (x11i.g && x11i.g != g) x11i_drop(x11i.g);
+    if (x11i.ic) return GOOME_OK;
+    if (x11i.failed) return gm_fail(g, GOOME_ENOTSUP, "no X input method here");
+    x11i.g = g, x11i.dpy = d, x11i.win = win;
+    x11i.im = x11i_open_im(d);
+    x11i.style = x11i.im ? x11i_pick(x11i.im) : 0;
+    if (!x11i.style) {
+        if (x11i.im) XI.CloseIM(x11i.im);
+        x11i.im = NULL, x11i.failed = 1;
+        return gm_fail(g, GOOME_ENOTSUP, "no X input method here");
+    }
+    x11i_point spot = {0, 0};
+    void *attr = NULL;
+    if (x11i.style & X11I_PRE_CALLBACKS) {
+        x11i.cbs[0].fn = (void (*)(void))x11i_pre_start;
+        x11i.cbs[1].fn = (void (*)(void))x11i_pre_done;
+        x11i.cbs[2].fn = (void (*)(void))x11i_pre_draw;
+        x11i.cbs[3].fn = (void (*)(void))x11i_pre_caret;
+        attr = XI.VaCreateNestedList(0, "spotLocation", &spot, "preeditStartCallback", &x11i.cbs[0], "preeditDoneCallback", &x11i.cbs[1],
+                                     "preeditDrawCallback", &x11i.cbs[2], "preeditCaretCallback", &x11i.cbs[3], NULL);
+    } else if (x11i.style & X11I_PRE_POSITION)
+        attr = XI.VaCreateNestedList(0, "spotLocation", &spot, NULL);
+    x11_err = 0;
+    if (attr) x11i.ic = XI.CreateIC(x11i.im, "inputStyle", x11i.style, "clientWindow", win, "focusWindow", win, "preeditAttributes", attr, NULL);
+    else x11i.ic = XI.CreateIC(x11i.im, "inputStyle", x11i.style, "clientWindow", win, "focusWindow", win, NULL);
+    if (attr) X11.Free(attr);
+    if (!x11i.ic) {
+        XI.CloseIM(x11i.im);
+        x11i.im = NULL, x11i.failed = 1;
+        return gm_fail(g, GOOME_ENOTSUP, "the X input method wouldnt make an input context");
+    }
+    unsigned long extra = 0;
+    if (mask && !XI.GetICValues(x11i.ic, "filterEvents", &extra, NULL) && (extra & ~(unsigned long)mask)) X11.SelectInput(d, win, mask | (long)extra);
+    return GOOME_OK;
+}
+
+static void x11i_spot(int x, int y)
+{
+    if (!(x11i.style & (X11I_PRE_CALLBACKS | X11I_PRE_POSITION))) return;
+    x11i_point p = {(short)x, (short)y};
+    void *attr = XI.VaCreateNestedList(0, "spotLocation", &p, NULL);
+    if (!attr) return;
+    XI.SetICValues(x11i.ic, "preeditAttributes", attr, NULL);
+    X11.Free(attr);
+}
+
+static void x11i_reset(void)
+{
+    char *left = XI.utf8ResetIC(x11i.ic);
+    if (left) X11.Free(left);
+    if (x11i.npre) x11i.npre = x11i.pcur = 0, x11i_send_pre();
+}
+
+int gm_ime_x11(goome *g, int on, const goome_rect *caret)
+{
+    x11_dpy *d;
+    x11_xid win;
+    int x, y;
+    long mask = 0;
+    if (g->ov_priv) {
+        x11_win *w = g->ov_priv;
+        d = w->dpy, win = w->win;
+        x = (int)(caret->x * w->scale + 0.5), y = (int)((caret->y + caret->h) * w->scale + 0.5);
+        mask = 1L | 4L | 8L | 16L | 64L | (1L << 15) | (1L << 17) | (1L << 21) | (1L << 22);
+    } else {
+        if (!x11.dpy) return gm_fail(g, GOOME_EGONE, "the X display is gone");
+        d = x11.dpy, win = x11.kwin ? x11.kwin : x11.root;
+        x11_xid child;
+        x = caret->x, y = caret->y + caret->h;
+        if (win != x11.root) X11.TranslateCoordinates(d, x11.root, win, caret->x, caret->y + caret->h, &x, &y, &child);
+        if (x11.kwin) mask = 1L | (1L << 21);
+    }
+    if (!on) {
+        if (x11i.g == g && x11i.ic && x11i.focused) x11i_reset(), XI.UnsetICFocus(x11i.ic), x11i.focused = 0;
+        if (x11i.g == g) X11.Flush(d);
+        return GOOME_OK;
+    }
+    int e = x11i_make(g, d, win, mask);
+    if (e != GOOME_OK) return e;
+    if (x11i.win != win) XI.SetICValues(x11i.ic, "focusWindow", win, NULL), x11i.win = win;
+    x11i_spot(x, y);
+    if (!x11i.focused) XI.SetICFocus(x11i.ic), x11i.focused = 1;
+    X11.Flush(d);
+    return GOOME_OK;
+}
+
+static int x11i_lookup(goome *g, x11_input_ev *k)
+{
+    if (!x11i.ic || !x11i.focused || x11i.g != g) return 0;
+    char small[64], *buf = small;
+    unsigned long sym = 0;
+    int st = 0, n = XI.utf8LookupString(x11i.ic, k, small, (int)sizeof(small) - 1, &sym, &st);
+    if (st == -1 && n > 0) {
+        buf = malloc((size_t)n + 1);
+        if (!buf) return 1;
+        n = XI.utf8LookupString(x11i.ic, k, buf, n, &sym, &st);
+    }
+    int done = 0;
+    if ((st == 2 || st == 4) && n > 0) {
+        buf[n] = 0;
+        char plain[16] = {0};
+        unsigned long psym = 0;
+        x11_input_ev copy = *k;
+        if (k->detail) X11.LookupString(&copy, plain, (int)sizeof(plain) - 1, &psym, NULL);
+        char want[8] = {0};
+        unsigned cp = psym >= 0x20 && psym <= 0xff ? (unsigned)psym : (psym & 0xff000000ul) == 0x01000000ul ? (unsigned)(psym & 0xffffff) : 0;
+        if (cp) want[x11_utf8(want, cp)] = 0;
+        if (!k->detail || strcmp(want, buf)) {
+            if ((unsigned char)buf[0] >= 32 && buf[0] != 127) gm_ime_push(g, GOOME_TEXT, buf, n, 0);
+            done = 1;
+        }
+    }
+    if (buf != small) free(buf);
+    return done;
+}
 
 static const gm_ov x11_wov = {"x11", x11_win_open, x11_win_canvas, x11_win_commit, x11_win_wait, x11_win_pointer, x11_win_keyboard, x11_win_hotkeys,
                               x11_win_close, GOOME_CAP_GLOBAL_POINTER | GOOME_CAP_KEYBOARD | GOOME_CAP_HOTKEYS | GOOME_CAP_WINDOW | GOOME_CAP_CLIPBOARD | GOOME_CAP_CURSOR |

@@ -10,7 +10,7 @@ warn=(-std=c99 -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initialize
 Xvfb -displayfd 3 -screen 0 1024x768x24 -nolisten tcp 3>"$out/display" >"$out/xvfb.log" 2>&1 &
 xvfb=$!
 trap 'kill $xvfb 2>/dev/null' EXIT
-for _ in $(seq 50); do [ -s "$out/display" ] && break; sleep 0.1; done
+for _ in $(seq 300); do [ -s "$out/display" ] && break; sleep 0.1; done
 [ -s "$out/display" ] || { echo "Xvfb didnt start"; cat "$out/xvfb.log"; exit 1; }
 export DISPLAY=":$(cat "$out/display")" LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe
 unset WAYLAND_DISPLAY
