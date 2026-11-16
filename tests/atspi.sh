@@ -10,7 +10,8 @@ if [ -z "${ATSPI_INNER:-}" ]; then
   exec env -u DBUS_SESSION_BUS_ADDRESS -u AT_SPI_BUS_ADDRESS XDG_RUNTIME_DIR="$rt" dbus-run-session -- bash "$0" "$@"
 fi
 cc="${CC:-cc}"
-"$cc" -std=c99 -O1 -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -Iinclude -o "$out/a11y_app" tests/a11y_app.c build/libgoome.a -ldl || exit 1
+bin="${ATSPI_APP:-$out/a11y_app}"
+[ -n "${ATSPI_APP:-}" ] || "$cc" -std=c99 -O1 -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -Iinclude -o "$bin" tests/a11y_app.c build/libgoome.a -ldl || exit 1
 d=":$((RANDOM % 400 + 300))"
 Xvfb "$d" -screen 0 1024x768x24 -nolisten tcp >"$out/xvfb.log" 2>&1 &
 xv=$!
@@ -20,7 +21,7 @@ gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus --method or
 echo "a11y bus: $(cat "$out/bus.txt")"
 reg=/usr/libexec/at-spi2-registryd
 [ -x "$reg" ] || reg=/usr/lib/at-spi2-core/at-spi2-registryd
-"$out/a11y_app" 40 >"$out/app.log" 2>&1 &
+"$bin" 40 >"$out/app.log" 2>&1 &
 app=$!
 sleep 1
 python3 tests/atspi_check.py "goome a11y" | tee "$out/check.log"

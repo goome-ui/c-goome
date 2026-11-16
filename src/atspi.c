@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 typedef struct {
     const char *name, *message;
@@ -879,6 +880,10 @@ static char *as_addr(void)
 {
     const char *e = gm_env("AT_SPI_BUS_ADDRESS");
     if (e) return strdup(e);
+    const char *rt = gm_env("XDG_RUNTIME_DIR");
+    char bus[1100];
+    snprintf(bus, sizeof(bus), "%s/bus", rt ? rt : "");
+    if (!gm_env("DBUS_SESSION_BUS_ADDRESS") && (!rt || access(bus, F_OK) != 0)) return NULL;
     as_err err;
     as_lib.err_init(&err);
     void *sb = as_lib.bus_get(0, &err);

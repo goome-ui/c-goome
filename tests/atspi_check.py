@@ -36,7 +36,7 @@ def walk(o, depth, out):
 
 def pick(nodes, role, name):
     for d, r, n, v, f, o in nodes:
-        if r == role and n == name:
+        if (r == role or (role == "button" and r == "push button")) and n == name:
             return o
     return None
 

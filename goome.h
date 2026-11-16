@@ -31819,6 +31819,7 @@ void *gm_mac_view(goome *g) { return g && g->ov == &mac_wov && g->ov_priv ? ((ma
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 typedef struct {
     const char *name, *message;
@@ -32693,6 +32694,10 @@ static char *as_addr(void)
 {
     const char *e = gm_env("AT_SPI_BUS_ADDRESS");
     if (e) return strdup(e);
+    const char *rt = gm_env("XDG_RUNTIME_DIR");
+    char bus[1100];
+    snprintf(bus, sizeof(bus), "%s/bus", rt ? rt : "");
+    if (!gm_env("DBUS_SESSION_BUS_ADDRESS") && (!rt || access(bus, F_OK) != 0)) return NULL;
     as_err err;
     as_lib.err_init(&err);
     void *sb = as_lib.bus_get(0, &err);
@@ -33979,11 +33984,22 @@ static int mx_load(void)
     void *ak = dlopen("/System/Library/Frameworks/AppKit.framework/AppKit", RTLD_NOW | RTLD_GLOBAL);
     if (!objc || !ak) return 0;
     void *p;
-#define MX_SYM(lib, name, f) (p = dlsym(lib, name), memcpy(&mx_lib.f, &p, sizeof(p)), p != NULL)
-    int ok = MX_SYM(objc, "objc_getClass", cls) & MX_SYM(objc, "sel_registerName", sel) & MX_SYM(objc, "objc_msgSend", msg) & MX_SYM(objc, "objc_allocateClassPair", alloc_pair) &
-             MX_SYM(objc, "objc_registerClassPair", reg_pair) & MX_SYM(objc, "class_addMethod", add) & MX_SYM(ak, "NSAccessibilityPostNotification", post);
+#define MX_SYM(lib, name, f)                \
+    do {                                    \
+        p = dlsym(lib, name);               \
+        memcpy(&mx_lib.f, &p, sizeof(p));   \
+        if (!p) ok = 0;                     \
+    } while (0)
+    int ok = 1;
+    MX_SYM(objc, "objc_getClass", cls);
+    MX_SYM(objc, "sel_registerName", sel);
+    MX_SYM(objc, "objc_msgSend", msg);
+    MX_SYM(objc, "objc_allocateClassPair", alloc_pair);
+    MX_SYM(objc, "objc_registerClassPair", reg_pair);
+    MX_SYM(objc, "class_addMethod", add);
+    MX_SYM(ak, "NSAccessibilityPostNotification", post);
 #if !defined(__aarch64__) && !defined(__arm64__)
-    ok &= MX_SYM(objc, "objc_msgSend_stret", stret);
+    MX_SYM(objc, "objc_msgSend_stret", stret);
 #endif
 #undef MX_SYM
     mx_lib.n_focus = dlsym(ak, "NSAccessibilityFocusedUIElementChangedNotification");

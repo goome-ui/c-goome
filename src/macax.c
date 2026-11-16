@@ -442,11 +442,22 @@ static int mx_load(void)
     void *ak = dlopen("/System/Library/Frameworks/AppKit.framework/AppKit", RTLD_NOW | RTLD_GLOBAL);
     if (!objc || !ak) return 0;
     void *p;
-#define MX_SYM(lib, name, f) (p = dlsym(lib, name), memcpy(&mx_lib.f, &p, sizeof(p)), p != NULL)
-    int ok = MX_SYM(objc, "objc_getClass", cls) & MX_SYM(objc, "sel_registerName", sel) & MX_SYM(objc, "objc_msgSend", msg) & MX_SYM(objc, "objc_allocateClassPair", alloc_pair) &
-             MX_SYM(objc, "objc_registerClassPair", reg_pair) & MX_SYM(objc, "class_addMethod", add) & MX_SYM(ak, "NSAccessibilityPostNotification", post);
+#define MX_SYM(lib, name, f)                \
+    do {                                    \
+        p = dlsym(lib, name);               \
+        memcpy(&mx_lib.f, &p, sizeof(p));   \
+        if (!p) ok = 0;                     \
+    } while (0)
+    int ok = 1;
+    MX_SYM(objc, "objc_getClass", cls);
+    MX_SYM(objc, "sel_registerName", sel);
+    MX_SYM(objc, "objc_msgSend", msg);
+    MX_SYM(objc, "objc_allocateClassPair", alloc_pair);
+    MX_SYM(objc, "objc_registerClassPair", reg_pair);
+    MX_SYM(objc, "class_addMethod", add);
+    MX_SYM(ak, "NSAccessibilityPostNotification", post);
 #if !defined(__aarch64__) && !defined(__arm64__)
-    ok &= MX_SYM(objc, "objc_msgSend_stret", stret);
+    MX_SYM(objc, "objc_msgSend_stret", stret);
 #endif
 #undef MX_SYM
     mx_lib.n_focus = dlsym(ak, "NSAccessibilityFocusedUIElementChangedNotification");
