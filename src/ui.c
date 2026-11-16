@@ -3617,6 +3617,7 @@ int goome_ui_app(goome_ui *u, const char *title, int flags)
     goome_rect a = u->area;
     ui_box box = ui_bx(a.x, a.y, a.w, a.h);
     int win = goome_mode(g) == GOOME_MODE_WINDOW, wf = g->opts.window_flags;
+    if (wf & GOOME_WINDOW_NO_TITLEBAR) flags &= ~GOOME_APP_TITLEBAR;
     int st = win ? goome_window_get_state(g) : GOOME_STATE_NORMAL;
     if (st < 0) st = GOOME_STATE_NORMAL;
     int max = st == GOOME_STATE_MAXIMIZED || st == GOOME_STATE_FULLSCREEN;

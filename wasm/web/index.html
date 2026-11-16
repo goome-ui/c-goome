@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>@TITLE@</title>
+<style>
+html, body { margin: 0; height: 100%; overflow: hidden; background: #181a20; }
+canvas { position: fixed; inset: 0; }
+#fail { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; color: #e8eaf0; font: 15px system-ui, sans-serif; padding: 24px; text-align: center; }
+</style>
+</head>
+<body>
+<canvas id="goome"></canvas>
+<div id="fail"></div>
+<script src="goome.js"></script>
+<script>
+GoomeWeb.boot(document.getElementById("goome"), "goome.wasm").catch(function (e) {
+  var f = document.getElementById("fail");
+  f.textContent = "this app didnt start: " + (e && e.message || e);
+  f.style.display = "flex";
+});
+</script>
+</body>
+</html>

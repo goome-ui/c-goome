@@ -30,4 +30,9 @@ else
   echo "goome-cli has no v$v tag yet, left aur/goome-cli alone"
 fi
 
+if [ -n "${GOOME_TAP:-}" ] && [ -f "$GOOME_TAP/Formula/goome.rb" ]; then
+  sed -i "s|archive/refs/tags/v[0-9][0-9.]*\.tar\.gz|archive/refs/tags/v$v.tar.gz|; s|^  sha256 .*|  sha256 \"$s256\"|" "$GOOME_TAP/Formula/goome.rb"
+  echo "formula in $GOOME_TAP is at $v, commit and push it"
+fi
+
 echo "packaging is at $v"
