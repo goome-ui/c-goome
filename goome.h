@@ -16060,7 +16060,7 @@ static struct {
     x11_image *img;
     uint32_t *buf;
     int w, h, wh, scr;
-    int composited, mapped, shaped;
+    int composited, mapped, shaped, dry;
     x11_box at;
     int rr_base;
     long checked, empty_at;
@@ -16204,6 +16204,26 @@ static void x11_ov_close(goome *g);
 static int x11_win_open(goome *g);
 static const gm_ov x11_wov;
 
+static x11_xid x11_ov_win(goome *g)
+{
+    x11_winattr a;
+    memset(&a, 0, sizeof(a));
+    a.override_redirect = 1;
+    a.colormap = x11.cmap;
+    x11_xid w = X11.CreateWindow(x11.dpy, x11.root, 0, 0, x11.w > 0 ? (unsigned)x11.w : 1, x11.wh > 0 ? (unsigned)x11.wh : 1, 0, 32, X11_INPUTOUTPUT,
+                                 x11.visual, X11_CW_OVERRIDE | X11_CW_COLORMAP | X11_CW_BACKPIXEL | X11_CW_BORDERPIXEL, &a);
+    X11.StoreName(x11.dpy, w, g->title);
+    x11_xid type = X11.InternAtom(x11.dpy, "_NET_WM_WINDOW_TYPE", 0), notif = X11.InternAtom(x11.dpy, "_NET_WM_WINDOW_TYPE_NOTIFICATION", 0);
+    X11.ChangeProperty(x11.dpy, w, type, X11_XA_ATOM, 32, 0, (unsigned char *)&notif, 1);
+    long keep = 2; // never unredirect us, xfwm did and the screen went black
+    X11.ChangeProperty(x11.dpy, w, X11.InternAtom(x11.dpy, "_NET_WM_BYPASS_COMPOSITOR", 0), X11_XA_CARDINAL, 32, 0, (unsigned char *)&keep, 1);
+    x11_xid empty = X11.FixesCreateRegion(x11.dpy, NULL, 0); // clicks go through until the first commit
+    X11.FixesSetWindowShapeRegion(x11.dpy, w, X11_SHAPE_INPUT, 0, 0, empty);
+    X11.FixesDestroyRegion(x11.dpy, empty);
+    X11.SelectInput(x11.dpy, w, X11_EVMASK);
+    return w;
+}
+
 static int x11_ov_open(goome *g)
 {
     if (g->opts.mode == GOOME_MODE_WINDOW) {
@@ -16245,21 +16265,8 @@ static int x11_ov_open(goome *g)
         x11.rr_base = ev;
         X11.RRSelectInput(x11.dpy, x11.root, X11_RR_MASK);
     }
-    x11_winattr a;
-    memset(&a, 0, sizeof(a));
-    a.override_redirect = 1;
-    a.colormap = x11.cmap = X11.CreateColormap(x11.dpy, x11.root, vi.visual, 0);
-    x11.win = X11.CreateWindow(x11.dpy, x11.root, 0, 0, 1, 1, 0, 32, X11_INPUTOUTPUT, vi.visual,
-                               X11_CW_OVERRIDE | X11_CW_COLORMAP | X11_CW_BACKPIXEL | X11_CW_BORDERPIXEL, &a);
-    X11.StoreName(x11.dpy, x11.win, g->title);
-    x11_xid type = X11.InternAtom(x11.dpy, "_NET_WM_WINDOW_TYPE", 0), notif = X11.InternAtom(x11.dpy, "_NET_WM_WINDOW_TYPE_NOTIFICATION", 0);
-    X11.ChangeProperty(x11.dpy, x11.win, type, X11_XA_ATOM, 32, 0, (unsigned char *)&notif, 1);
-    long keep = 2; // never unredirect us, xfwm did and the screen went black
-    X11.ChangeProperty(x11.dpy, x11.win, X11.InternAtom(x11.dpy, "_NET_WM_BYPASS_COMPOSITOR", 0), X11_XA_CARDINAL, 32, 0, (unsigned char *)&keep, 1);
-    x11_xid empty = X11.FixesCreateRegion(x11.dpy, NULL, 0); // clicks go through until the first commit
-    X11.FixesSetWindowShapeRegion(x11.dpy, x11.win, X11_SHAPE_INPUT, 0, 0, empty);
-    X11.FixesDestroyRegion(x11.dpy, empty);
-    X11.SelectInput(x11.dpy, x11.win, X11_EVMASK);
+    x11.cmap = X11.CreateColormap(x11.dpy, x11.root, vi.visual, 0);
+    x11.win = x11_ov_win(g);
     x11.gc = X11.CreateGC(x11.dpy, x11.win, 0, NULL);
     X11.SetGraphicsExposures(x11.dpy, x11.gc, 0);
     x11.checked = goome_now_ms();
@@ -16395,6 +16402,16 @@ static int x11_ov_commit(goome *g, int mon, goome_canvas *c, const goome_rect *h
     x11.at = empty ? (x11_box){0, 0, 0, 0} : u;
     if (empty && !x11.empty_at) x11.empty_at = goome_now_ms();
     if (!empty) x11.empty_at = 0;
+    int nh = 0;
+    for (int i = 0; i < x11.nmon; i++) nh += x11.nhits[i];
+    x11_xid old = 0;
+    if (x11.mapped && x11.dry && nh && !empty) {
+        old = x11.win;
+        x11.win = x11_ov_win(g);
+        x11.mapped = 0;
+        if (x11.pix) X11.FreePixmap(x11.dpy, x11.pix), x11.pix = 0;
+    }
+    if (!x11.mapped) x11.dry = !nh;
     x11_input_shape();
     if (!x11.composited) x11_bounding_shape(); // no compositor = no alpha, cut the window down to the solid px
     int d0, e0, d1, e1;
@@ -16403,6 +16420,8 @@ static int x11_ov_commit(goome *g, int mon, goome_canvas *c, const goome_rect *h
         x11_put(u.x0, u.y0, u.x1, u.y1, 0);
         X11.MapRaised(x11.dpy, x11.win), x11.mapped = 1;
         X11.CopyArea(x11.dpy, x11.pix, x11.win, x11.gc, u.x0, u.y0, (unsigned)(u.x1 - u.x0), (unsigned)(u.y1 - u.y0), u.x0, u.y0);
+        if (old && x11.grab) X11.GrabPointer(x11.dpy, x11.win, 0, 4 | 8 | 64, X11_GRAB_ASYNC, X11_GRAB_ASYNC, 0, 0, 0);
+        if (old) X11.DestroyWindow(x11.dpy, old);
     } else if (gm_canvas_damage(c, &d0, &e0, &d1, &e1))
         x11_put(d0 + ox, e0 + oy, d1 + ox, e1 + oy, 1);
     X11.RaiseWindow(x11.dpy, x11.win);
