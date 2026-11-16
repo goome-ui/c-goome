@@ -637,7 +637,7 @@ typedef struct gm_ax_s {
     goome_a11y_node *n, *pn;
     gm_ax_x *x, *px;
     char *text, *ptext;
-    int count, pcount, cap, pcap, ntext, tcap, pntext, ptcap, active, pactive, synced;
+    int count, pcount, cap, pcap, ntext, tcap, pntext, ptcap, active, pactive, synced, serial;
     uint32_t *hash;
     int hcap;
     char *long_text;
@@ -655,6 +655,12 @@ int gm_ax_bytes(const char *s, int n, int chars);
 enum { GM_AXE_FOCUS = 1, GM_AXE_VALUE, GM_AXE_NAME, GM_AXE_STATE, GM_AXE_ADD, GM_AXE_REMOVE, GM_AXE_ACTIVE, GM_AXE_TEXT, GM_AXE_CARET };
 #endif
 int gm_ax_pump(struct goome *g);
+#if defined(__APPLE__) && !defined(GOOME_NO_UI)
+void *gm_mac_view(struct goome *g);
+#endif
+#if defined(_WIN32) && !defined(GOOME_NO_UI)
+int gm_uia_obj(struct goome *g, void *hwnd, uintptr_t wp, intptr_t lp, intptr_t *out);
+#endif
 void gm_ax_close(struct goome *g);
 const gm_cap *gm_cap_test(void);
 const gm_ov *gm_ov_test(void);
@@ -15995,7 +16001,7 @@ void gm_ax_sync(goome *g, const goome_a11y_node *n, const gm_ax_x *x, int count,
     a->count = count, a->ntext = ntext, a->active = active;
     ax_rehash(a);
     int first = !a->synced;
-    a->synced = 1;
+    a->synced = 1, a->serial++;
     if (!ax_bridge(g) || first) return;
     if (a->active != a->pactive) gm_axp_event(g, GM_AXE_ACTIVE, -1, a->pactive);
     int pf = -1, cf = -1;
@@ -29319,6 +29325,13 @@ static LRESULT CALLBACK w32w_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     case WM_SYSCOMMAND:
         if ((wp & 0xFFF0) == SC_KEYMENU && lp == 0) return 0;
         break;
+#ifndef GOOME_NO_UI
+    case WM_GETOBJECT: {
+        intptr_t r;
+        if (gm_uia_obj(g, h, (uintptr_t)wp, (intptr_t)lp, &r)) return (LRESULT)r;
+        break;
+    }
+#endif
     case WM_SETFOCUS:
     case WM_KILLFOCUS: {
         goome_event e;
@@ -31790,6 +31803,10 @@ static const gm_ov mac_wov = {"macos", mac_wopen, mac_wcanvas, mac_wcommit, mac_
                               mac_wwin, mac_wcursor, mac_clip_set, mac_clip_get, mac_whold};
 static const gm_ov *mac_wtable(void) { return &mac_wov; }
 
+#ifndef GOOME_NO_UI
+void *gm_mac_view(goome *g) { return g && g->ov == &mac_wov && g->ov_priv ? ((mac_win *)g->ov_priv)->view : NULL; }
+#endif
+
 #undef MAC_B
 #undef MAC_RECT_ENC
 #undef MAC_BLK_GLOBAL
@@ -31846,7 +31863,7 @@ static struct {
     unsigned (*it_put)(as_it *, int, const void *);
     unsigned (*it_open)(as_it *, int, const char *, as_it *);
     unsigned (*it_close)(as_it *, as_it *);
-} D;
+} as_lib;
 
 typedef struct {
     void *bus;
@@ -31859,8 +31876,8 @@ typedef struct {
 
 static int as_load(void)
 {
-    if (D.tried) return D.ok;
-    D.tried = 1;
+    if (as_lib.tried) return as_lib.ok;
+    as_lib.tried = 1;
     void *h = dlopen("libdbus-1.so.3", RTLD_NOW | RTLD_LOCAL);
     if (!h) h = dlopen("libdbus-1.so", RTLD_NOW | RTLD_LOCAL);
     if (!h) return 0;
@@ -31868,37 +31885,37 @@ static int as_load(void)
         void **p;
         const char *n;
     } f[] = {
-        {(void **)&D.err_init, "dbus_error_init"}, {(void **)&D.err_free, "dbus_error_free"}, {(void **)&D.bus_get, "dbus_bus_get_private"},
-        {(void **)&D.open, "dbus_connection_open_private"}, {(void **)&D.reg, "dbus_bus_register"}, {(void **)&D.unique, "dbus_bus_get_unique_name"},
-        {(void **)&D.no_exit, "dbus_connection_set_exit_on_disconnect"}, {(void **)&D.close, "dbus_connection_close"}, {(void **)&D.unref, "dbus_connection_unref"},
-        {(void **)&D.rw, "dbus_connection_read_write"}, {(void **)&D.pop, "dbus_connection_pop_message"}, {(void **)&D.send, "dbus_connection_send"},
-        {(void **)&D.flush, "dbus_connection_flush"}, {(void **)&D.call, "dbus_connection_send_with_reply_and_block"},
-        {(void **)&D.m_call, "dbus_message_new_method_call"}, {(void **)&D.m_ret, "dbus_message_new_method_return"}, {(void **)&D.m_err, "dbus_message_new_error"},
-        {(void **)&D.m_sig, "dbus_message_new_signal"}, {(void **)&D.m_unref, "dbus_message_unref"}, {(void **)&D.m_type, "dbus_message_get_type"},
-        {(void **)&D.m_path, "dbus_message_get_path"}, {(void **)&D.m_iface, "dbus_message_get_interface"}, {(void **)&D.m_member, "dbus_message_get_member"},
-        {(void **)&D.it_init, "dbus_message_iter_init"}, {(void **)&D.it_type, "dbus_message_iter_get_arg_type"}, {(void **)&D.it_get, "dbus_message_iter_get_basic"},
-        {(void **)&D.it_next, "dbus_message_iter_next"}, {(void **)&D.it_rec, "dbus_message_iter_recurse"}, {(void **)&D.it_app, "dbus_message_iter_init_append"},
-        {(void **)&D.it_put, "dbus_message_iter_append_basic"}, {(void **)&D.it_open, "dbus_message_iter_open_container"},
-        {(void **)&D.it_close, "dbus_message_iter_close_container"},
+        {(void **)&as_lib.err_init, "dbus_error_init"}, {(void **)&as_lib.err_free, "dbus_error_free"}, {(void **)&as_lib.bus_get, "dbus_bus_get_private"},
+        {(void **)&as_lib.open, "dbus_connection_open_private"}, {(void **)&as_lib.reg, "dbus_bus_register"}, {(void **)&as_lib.unique, "dbus_bus_get_unique_name"},
+        {(void **)&as_lib.no_exit, "dbus_connection_set_exit_on_disconnect"}, {(void **)&as_lib.close, "dbus_connection_close"}, {(void **)&as_lib.unref, "dbus_connection_unref"},
+        {(void **)&as_lib.rw, "dbus_connection_read_write"}, {(void **)&as_lib.pop, "dbus_connection_pop_message"}, {(void **)&as_lib.send, "dbus_connection_send"},
+        {(void **)&as_lib.flush, "dbus_connection_flush"}, {(void **)&as_lib.call, "dbus_connection_send_with_reply_and_block"},
+        {(void **)&as_lib.m_call, "dbus_message_new_method_call"}, {(void **)&as_lib.m_ret, "dbus_message_new_method_return"}, {(void **)&as_lib.m_err, "dbus_message_new_error"},
+        {(void **)&as_lib.m_sig, "dbus_message_new_signal"}, {(void **)&as_lib.m_unref, "dbus_message_unref"}, {(void **)&as_lib.m_type, "dbus_message_get_type"},
+        {(void **)&as_lib.m_path, "dbus_message_get_path"}, {(void **)&as_lib.m_iface, "dbus_message_get_interface"}, {(void **)&as_lib.m_member, "dbus_message_get_member"},
+        {(void **)&as_lib.it_init, "dbus_message_iter_init"}, {(void **)&as_lib.it_type, "dbus_message_iter_get_arg_type"}, {(void **)&as_lib.it_get, "dbus_message_iter_get_basic"},
+        {(void **)&as_lib.it_next, "dbus_message_iter_next"}, {(void **)&as_lib.it_rec, "dbus_message_iter_recurse"}, {(void **)&as_lib.it_app, "dbus_message_iter_init_append"},
+        {(void **)&as_lib.it_put, "dbus_message_iter_append_basic"}, {(void **)&as_lib.it_open, "dbus_message_iter_open_container"},
+        {(void **)&as_lib.it_close, "dbus_message_iter_close_container"},
     };
     for (size_t i = 0; i < sizeof(f) / sizeof(f[0]); i++) {
         *f[i].p = dlsym(h, f[i].n);
         if (!*f[i].p) return 0;
     }
-    D.ok = 1;
+    as_lib.ok = 1;
     return 1;
 }
 
-static void as_s(as_it *it, const char *s) { D.it_put(it, 's', &s); }
-static void as_o(as_it *it, const char *s) { D.it_put(it, 'o', &s); }
-static void as_i(as_it *it, int v) { D.it_put(it, 'i', &v); }
-static void as_u(as_it *it, uint32_t v) { D.it_put(it, 'u', &v); }
+static void as_s(as_it *it, const char *s) { as_lib.it_put(it, 's', &s); }
+static void as_o(as_it *it, const char *s) { as_lib.it_put(it, 'o', &s); }
+static void as_i(as_it *it, int v) { as_lib.it_put(it, 'i', &v); }
+static void as_u(as_it *it, uint32_t v) { as_lib.it_put(it, 'u', &v); }
 static void as_b(as_it *it, int v)
 {
     uint32_t b = v != 0;
-    D.it_put(it, 'b', &b);
+    as_lib.it_put(it, 'b', &b);
 }
-static void as_d(as_it *it, double v) { D.it_put(it, 'd', &v); }
+static void as_d(as_it *it, double v) { as_lib.it_put(it, 'd', &v); }
 
 static void as_path(char *out, size_t cap, int i, const gm_ax *a)
 {
@@ -31913,19 +31930,19 @@ static void as_ref(as_it *it, as_st *s, const gm_ax *a, int i)
     as_it r;
     char p[96];
     as_path(p, sizeof(p), i, a);
-    D.it_open(it, 'r', NULL, &r);
+    as_lib.it_open(it, 'r', NULL, &r);
     as_s(&r, s->me);
     as_o(&r, p);
-    D.it_close(it, &r);
+    as_lib.it_close(it, &r);
 }
 
 static void as_desk(as_it *it, as_st *s)
 {
     as_it r;
-    D.it_open(it, 'r', NULL, &r);
+    as_lib.it_open(it, 'r', NULL, &r);
     as_s(&r, s->desk[0] ? s->desk : s->me);
     as_o(&r, s->desk[0] ? s->dpath : "/org/a11y/atspi/null");
-    D.it_close(it, &r);
+    as_lib.it_close(it, &r);
 }
 
 static int as_obj(const gm_ax *a, const char *path)
@@ -32088,7 +32105,7 @@ static void as_ifaces(as_it *it, const gm_ax *a, int i)
     as_it r;
     const char *names[2] = {NULL, NULL};
     int verbs[2] = {0, 0};
-    D.it_open(it, 'a', "s", &r);
+    as_lib.it_open(it, 'a', "s", &r);
     as_s(&r, AS_IF "Accessible");
     if (i == -2) as_s(&r, AS_IF "Application");
     else as_s(&r, AS_IF "Component");
@@ -32096,7 +32113,7 @@ static void as_ifaces(as_it *it, const gm_ax *a, int i)
     if (i >= 0 && (a->x[i].kind & GM_AXK_RANGE)) as_s(&r, AS_IF "Value");
     if (as_is_text(a, i)) as_s(&r, AS_IF "Text");
     if (i >= 0 && a->n[i].role == GOOME_ROLE_INPUT && (a->x[i].kind & GM_AXK_EDITABLE)) as_s(&r, AS_IF "EditableText");
-    D.it_close(it, &r);
+    as_lib.it_close(it, &r);
 }
 
 static void as_origin(goome *g, double *ox, double *oy, double *sc)
@@ -32133,9 +32150,9 @@ static int as_at(goome *g, const gm_ax *a, int x, int y, uint32_t coord)
 static void as_var_s(as_it *it, const char *s)
 {
     as_it v;
-    D.it_open(it, 'v', "s", &v);
+    as_lib.it_open(it, 'v', "s", &v);
     as_s(&v, s);
-    D.it_close(it, &v);
+    as_lib.it_close(it, &v);
 }
 
 static void as_name(const gm_ax *a, int i, goome *g, char *out, size_t cap)
@@ -32158,14 +32175,14 @@ static int as_prop(goome *g, as_st *s, const gm_ax *a, int i, const char *iface,
             snprintf(t, sizeof(t), "%u", i >= 0 ? (unsigned)a->n[i].id : 0u);
             as_var_s(it, i >= 0 ? t : "");
         } else if (!strcmp(prop, "ChildCount")) {
-            D.it_open(it, 'v', "i", &v);
+            as_lib.it_open(it, 'v', "i", &v);
             as_i(&v, as_kids(a, i, NULL, 0));
-            D.it_close(it, &v);
+            as_lib.it_close(it, &v);
         } else if (!strcmp(prop, "Parent")) {
-            D.it_open(it, 'v', "(so)", &v);
+            as_lib.it_open(it, 'v', "(so)", &v);
             if (i == -2) as_desk(&v, s);
             else as_ref(&v, s, a, i == -1 ? -2 : a->n[i].parent);
-            D.it_close(it, &v);
+            as_lib.it_close(it, &v);
         } else
             return 0;
         return 1;
@@ -32175,9 +32192,9 @@ static int as_prop(goome *g, as_st *s, const gm_ax *a, int i, const char *iface,
         else if (!strcmp(prop, "Version")) as_var_s(it, GOOME_VERSION);
         else if (!strcmp(prop, "AtspiVersion")) as_var_s(it, "2.1");
         else if (!strcmp(prop, "Id")) {
-            D.it_open(it, 'v', "i", &v);
+            as_lib.it_open(it, 'v', "i", &v);
             as_i(&v, s->app_id);
-            D.it_close(it, &v);
+            as_lib.it_close(it, &v);
         } else
             return 0;
         return 1;
@@ -32191,25 +32208,25 @@ static int as_prop(goome *g, as_st *s, const gm_ax *a, int i, const char *iface,
         double d = !strcmp(prop, "MinimumValue") ? n->min : !strcmp(prop, "MaximumValue") ? n->max : !strcmp(prop, "CurrentValue") ? n->num : 0;
         if (!strcmp(prop, "MinimumIncrement")) d = n->max > n->min && n->max - n->min >= 2 ? 1 : 0;
         else if (strcmp(prop, "MinimumValue") && strcmp(prop, "MaximumValue") && strcmp(prop, "CurrentValue")) return 0;
-        D.it_open(it, 'v', "d", &v);
+        as_lib.it_open(it, 'v', "d", &v);
         as_d(&v, d);
-        D.it_close(it, &v);
+        as_lib.it_close(it, &v);
         return 1;
     }
     if (!strcmp(iface, AS_IF "Action") && i >= 0 && !strcmp(prop, "NActions")) {
         const char *names[2] = {NULL, NULL};
         int verbs[2] = {0, 0};
-        D.it_open(it, 'v', "i", &v);
+        as_lib.it_open(it, 'v', "i", &v);
         as_i(&v, as_acts(a, i, names, verbs));
-        D.it_close(it, &v);
+        as_lib.it_close(it, &v);
         return 1;
     }
     if (!strcmp(iface, AS_IF "Text") && as_is_text(a, i) && (!strcmp(prop, "CharacterCount") || !strcmp(prop, "CaretOffset"))) {
         int len;
         const char *x = as_text(a, i, &len);
-        D.it_open(it, 'v', "i", &v);
+        as_lib.it_open(it, 'v', "i", &v);
         as_i(&v, !strcmp(prop, "CharacterCount") ? gm_ax_chars(x, len) : a->n[i].role == GOOME_ROLE_INPUT ? a->n[i].caret : 0);
-        D.it_close(it, &v);
+        as_lib.it_close(it, &v);
         return 1;
     }
     return 0;
@@ -32225,32 +32242,32 @@ static void as_all(goome *g, as_st *s, const gm_ax *a, int i, const char *iface,
     const char *const *l = !strcmp(iface, AS_IF "Accessible") ? acc : !strcmp(iface, AS_IF "Application") ? app : !strcmp(iface, AS_IF "Value") ? val
                          : !strcmp(iface, AS_IF "Action") ? act : !strcmp(iface, AS_IF "Text") ? txt : NULL;
     as_it r;
-    D.it_open(it, 'a', "{sv}", &r);
+    as_lib.it_open(it, 'a', "{sv}", &r);
     for (int k = 0; l && l[k]; k++) {
         as_it e;
-        D.it_open(&r, 'e', NULL, &e);
+        as_lib.it_open(&r, 'e', NULL, &e);
         as_s(&e, l[k]);
         if (!as_prop(g, s, a, i, iface, l[k], &e)) as_var_s(&e, "");
-        D.it_close(&r, &e);
+        as_lib.it_close(&r, &e);
     }
-    D.it_close(it, &r);
+    as_lib.it_close(it, &r);
 }
 
 static int as_arg(void *m, int idx, int type, void *out)
 {
     as_it it;
-    if (!D.it_init(m, &it)) return 0;
+    if (!as_lib.it_init(m, &it)) return 0;
     for (int k = 0; k < idx; k++)
-        if (!D.it_next(&it)) return 0;
-    if (D.it_type(&it) == 'v') {
+        if (!as_lib.it_next(&it)) return 0;
+    if (as_lib.it_type(&it) == 'v') {
         as_it v;
-        D.it_rec(&it, &v);
-        if (D.it_type(&v) != type) return 0;
-        D.it_get(&v, out);
+        as_lib.it_rec(&it, &v);
+        if (as_lib.it_type(&v) != type) return 0;
+        as_lib.it_get(&v, out);
         return 1;
     }
-    if (D.it_type(&it) != type) return 0;
-    D.it_get(&it, out);
+    if (as_lib.it_type(&it) != type) return 0;
+    as_lib.it_get(&it, out);
     return 1;
 }
 
@@ -32305,25 +32322,25 @@ static void as_ranged(as_it *it, const char *t, int len, int a0, int a1)
 static void *as_handle(goome *g, as_st *s, void *m)
 {
     gm_ax *a = g->ax;
-    const char *iface = D.m_iface(m), *mem = D.m_member(m);
-    if (!iface || !mem) return D.m_err(m, "org.freedesktop.DBus.Error.UnknownMethod", "no interface");
-    if (!strcmp(iface, "org.freedesktop.DBus.Peer")) return D.m_ret(m);
-    const char *path = D.m_path(m);
+    const char *iface = as_lib.m_iface(m), *mem = as_lib.m_member(m);
+    if (!iface || !mem) return as_lib.m_err(m, "org.freedesktop.DBus.Error.UnknownMethod", "no interface");
+    if (!strcmp(iface, "org.freedesktop.DBus.Peer")) return as_lib.m_ret(m);
+    const char *path = as_lib.m_path(m);
     if (path && !strcmp(path, "/org/a11y/atspi/cache") && !strcmp(mem, "GetItems")) {
-        void *r = D.m_ret(m);
+        void *r = as_lib.m_ret(m);
         as_it it, c;
         if (!r) return NULL;
-        D.it_app(r, &it);
-        D.it_open(&it, 'a', "((so)(so)(so)iiassusau)", &c);
-        D.it_close(&it, &c);
+        as_lib.it_app(r, &it);
+        as_lib.it_open(&it, 'a', "((so)(so)(so)iiassusau)", &c);
+        as_lib.it_close(&it, &c);
         return r;
     }
     int i = as_obj(a, path);
-    if (i == -3) return D.m_err(m, "org.freedesktop.DBus.Error.UnknownObject", "that one is gone");
-    void *r = D.m_ret(m);
+    if (i == -3) return as_lib.m_err(m, "org.freedesktop.DBus.Error.UnknownObject", "that one is gone");
+    void *r = as_lib.m_ret(m);
     if (!r) return NULL;
     as_it it, c;
-    D.it_app(r, &it);
+    as_lib.it_app(r, &it);
     char t[160];
     if (!strcmp(iface, "org.freedesktop.DBus.Properties")) {
         const char *pi = NULL, *pn = NULL;
@@ -32356,12 +32373,12 @@ static void *as_handle(goome *g, as_st *s, void *m)
             return r;
         }
         if (!strcmp(mem, "GetChildren")) {
-            D.it_open(&it, 'a', "(so)", &c);
+            as_lib.it_open(&it, 'a', "(so)", &c);
             if (i == -2) as_ref(&c, s, a, -1);
             else
                 for (int j = 0; j < a->count; j++)
                     if (a->n[j].parent == i) as_ref(&c, s, a, j);
-            D.it_close(&it, &c);
+            as_lib.it_close(&it, &c);
             return r;
         }
         if (!strcmp(mem, "GetIndexInParent")) {
@@ -32373,8 +32390,8 @@ static void *as_handle(goome *g, as_st *s, void *m)
             return r;
         }
         if (!strcmp(mem, "GetRelationSet")) {
-            D.it_open(&it, 'a', "(ua(so))", &c);
-            D.it_close(&it, &c);
+            as_lib.it_open(&it, 'a', "(ua(so))", &c);
+            as_lib.it_close(&it, &c);
             return r;
         }
         if (!strcmp(mem, "GetRole")) {
@@ -32388,19 +32405,19 @@ static void *as_handle(goome *g, as_st *s, void *m)
         if (!strcmp(mem, "GetState")) {
             uint32_t st[2];
             as_states(a, i, st);
-            D.it_open(&it, 'a', "u", &c);
+            as_lib.it_open(&it, 'a', "u", &c);
             as_u(&c, st[0]), as_u(&c, st[1]);
-            D.it_close(&it, &c);
+            as_lib.it_close(&it, &c);
             return r;
         }
         if (!strcmp(mem, "GetAttributes")) {
             as_it e;
-            D.it_open(&it, 'a', "{ss}", &c);
-            D.it_open(&c, 'e', NULL, &e);
+            as_lib.it_open(&it, 'a', "{ss}", &c);
+            as_lib.it_open(&c, 'e', NULL, &e);
             as_s(&e, "toolkit");
             as_s(&e, "goome");
-            D.it_close(&c, &e);
-            D.it_close(&it, &c);
+            as_lib.it_close(&c, &e);
+            as_lib.it_close(&it, &c);
             return r;
         }
         if (!strcmp(mem, "GetApplication")) {
@@ -32420,9 +32437,9 @@ static void *as_handle(goome *g, as_st *s, void *m)
         int box[4];
         if (!strcmp(mem, "GetExtents")) {
             as_box(g, a, i, (uint32_t)as_int(m, 0), box);
-            D.it_open(&it, 'r', NULL, &c);
+            as_lib.it_open(&it, 'r', NULL, &c);
             for (int k = 0; k < 4; k++) as_i(&c, box[k]);
-            D.it_close(&it, &c);
+            as_lib.it_close(&it, &c);
             return r;
         }
         if (!strcmp(mem, "GetPosition") || !strcmp(mem, "GetSize")) {
@@ -32447,7 +32464,7 @@ static void *as_handle(goome *g, as_st *s, void *m)
         }
         if (!strcmp(mem, "GetMDIZOrder")) {
             int16_t z = 0;
-            D.it_put(&it, 'n', &z);
+            as_lib.it_put(&it, 'n', &z);
             return r;
         }
         if (!strcmp(mem, "GetAlpha")) {
@@ -32468,13 +32485,13 @@ static void *as_handle(goome *g, as_st *s, void *m)
         int verbs[2] = {0, 0}, n = as_acts(a, i, names, verbs), k = as_int(m, 0);
         if (!strcmp(mem, "GetActions")) {
             as_it e;
-            D.it_open(&it, 'a', "(sss)", &c);
+            as_lib.it_open(&it, 'a', "(sss)", &c);
             for (int j = 0; j < n; j++) {
-                D.it_open(&c, 'r', NULL, &e);
+                as_lib.it_open(&c, 'r', NULL, &e);
                 as_s(&e, names[j]), as_s(&e, names[j]), as_s(&e, "");
-                D.it_close(&c, &e);
+                as_lib.it_close(&c, &e);
             }
-            D.it_close(&it, &c);
+            as_lib.it_close(&it, &c);
             return r;
         }
         if (!strcmp(mem, "GetName") || !strcmp(mem, "GetLocalizedName") || !strcmp(mem, "GetDescription")) {
@@ -32536,8 +32553,8 @@ static void *as_handle(goome *g, as_st *s, void *m)
             return r;
         }
         if (!strcmp(mem, "GetAttributes") || !strcmp(mem, "GetAttributeRun") || !strcmp(mem, "GetDefaultAttributes") || !strcmp(mem, "GetDefaultAttributeSet")) {
-            D.it_open(&it, 'a', "{ss}", &c);
-            D.it_close(&it, &c);
+            as_lib.it_open(&it, 'a', "{ss}", &c);
+            as_lib.it_close(&it, &c);
             if (mem[3] == 'A') as_i(&it, 0), as_i(&it, n);
             return r;
         }
@@ -32560,39 +32577,39 @@ static void *as_handle(goome *g, as_st *s, void *m)
             return r;
         }
     }
-    D.m_unref(r);
+    as_lib.m_unref(r);
     snprintf(t, sizeof(t), "goome has no %s.%s here", iface, mem);
-    return D.m_err(m, "org.freedesktop.DBus.Error.UnknownMethod", t);
+    return as_lib.m_err(m, "org.freedesktop.DBus.Error.UnknownMethod", t);
 }
 
 static void as_emit(as_st *s, const gm_ax *a, int i, const char *iface, const char *member, const char *detail, int d1, int d2, int kind, const void *any)
 {
     char p[96];
     as_path(p, sizeof(p), i, a);
-    void *m = D.m_sig(p, iface, member);
+    void *m = as_lib.m_sig(p, iface, member);
     if (!m) return;
     as_it it, v, e;
-    D.it_app(m, &it);
+    as_lib.it_app(m, &it);
     as_s(&it, detail);
     as_i(&it, d1), as_i(&it, d2);
     if (kind == 's') {
-        D.it_open(&it, 'v', "s", &v);
+        as_lib.it_open(&it, 'v', "s", &v);
         as_s(&v, (const char *)any);
     } else if (kind == 'r') {
-        D.it_open(&it, 'v', "(so)", &v);
-        D.it_open(&v, 'r', NULL, &e);
+        as_lib.it_open(&it, 'v', "(so)", &v);
+        as_lib.it_open(&v, 'r', NULL, &e);
         as_s(&e, s->me);
         as_o(&e, (const char *)any);
-        D.it_close(&v, &e);
+        as_lib.it_close(&v, &e);
     } else {
-        D.it_open(&it, 'v', "i", &v);
+        as_lib.it_open(&it, 'v', "i", &v);
         as_i(&v, 0);
     }
-    D.it_close(&it, &v);
-    D.it_open(&it, 'a', "{sv}", &v);
-    D.it_close(&it, &v);
-    D.send(s->bus, m, NULL);
-    D.m_unref(m);
+    as_lib.it_close(&it, &v);
+    as_lib.it_open(&it, 'a', "{sv}", &v);
+    as_lib.it_close(&it, &v);
+    as_lib.send(s->bus, m, NULL);
+    as_lib.m_unref(m);
 }
 
 static void as_state(as_st *s, const gm_ax *a, int i, const char *what, int on) { as_emit(s, a, i, AS_IF "Event.Object", "StateChanged", what, on, 0, 0, NULL); }
@@ -32677,23 +32694,23 @@ static char *as_addr(void)
     const char *e = gm_env("AT_SPI_BUS_ADDRESS");
     if (e) return strdup(e);
     as_err err;
-    D.err_init(&err);
-    void *sb = D.bus_get(0, &err);
+    as_lib.err_init(&err);
+    void *sb = as_lib.bus_get(0, &err);
     if (!sb) {
-        D.err_free(&err);
+        as_lib.err_free(&err);
         return NULL;
     }
-    D.no_exit(sb, 0);
+    as_lib.no_exit(sb, 0);
     char *out = NULL;
-    void *m = D.m_call("org.a11y.Bus", "/org/a11y/bus", "org.a11y.Bus", "GetAddress");
-    void *r = m ? D.call(sb, m, 1500, &err) : NULL;
+    void *m = as_lib.m_call("org.a11y.Bus", "/org/a11y/bus", "org.a11y.Bus", "GetAddress");
+    void *r = m ? as_lib.call(sb, m, 1500, &err) : NULL;
     const char *s = NULL;
     if (r && as_arg(r, 0, 's', (void *)&s) && s && *s) out = strdup(s);
-    if (r) D.m_unref(r);
-    if (m) D.m_unref(m);
-    D.err_free(&err);
-    D.close(sb);
-    D.unref(sb);
+    if (r) as_lib.m_unref(r);
+    if (m) as_lib.m_unref(m);
+    as_lib.err_free(&err);
+    as_lib.close(sb);
+    as_lib.unref(sb);
     return out;
 }
 
@@ -32703,54 +32720,54 @@ int gm_axp_open(goome *g)
     char *addr = as_addr();
     if (!addr) return -1;
     as_err err;
-    D.err_init(&err);
-    void *bus = D.open(addr, &err);
+    as_lib.err_init(&err);
+    void *bus = as_lib.open(addr, &err);
     free(addr);
     if (!bus) {
-        D.err_free(&err);
+        as_lib.err_free(&err);
         return -1;
     }
-    D.no_exit(bus, 0);
-    if (!D.reg(bus, &err)) {
-        D.err_free(&err);
-        D.close(bus);
-        D.unref(bus);
+    as_lib.no_exit(bus, 0);
+    if (!as_lib.reg(bus, &err)) {
+        as_lib.err_free(&err);
+        as_lib.close(bus);
+        as_lib.unref(bus);
         return -1;
     }
     as_st *s = calloc(1, sizeof(*s));
     if (!s) {
-        D.close(bus);
-        D.unref(bus);
+        as_lib.close(bus);
+        as_lib.unref(bus);
         return -1;
     }
     s->bus = bus;
-    snprintf(s->me, sizeof(s->me), "%s", D.unique(bus) ? D.unique(bus) : "");
+    snprintf(s->me, sizeof(s->me), "%s", as_lib.unique(bus) ? as_lib.unique(bus) : "");
     g->ax->plat = s;
-    void *m = D.m_call("org.a11y.atspi.Registry", AS_PRE "root", AS_IF "Socket", "Embed");
+    void *m = as_lib.m_call("org.a11y.atspi.Registry", AS_PRE "root", AS_IF "Socket", "Embed");
     if (m) {
         as_it it, r;
-        D.it_app(m, &it);
-        D.it_open(&it, 'r', NULL, &r);
+        as_lib.it_app(m, &it);
+        as_lib.it_open(&it, 'r', NULL, &r);
         as_s(&r, s->me);
         as_o(&r, AS_PRE "root");
-        D.it_close(&it, &r);
-        void *rep = D.call(bus, m, 1500, &err);
-        D.m_unref(m);
+        as_lib.it_close(&it, &r);
+        void *rep = as_lib.call(bus, m, 1500, &err);
+        as_lib.m_unref(m);
         if (rep) {
             as_it ri, st;
-            if (D.it_init(rep, &ri) && D.it_type(&ri) == 'r') {
+            if (as_lib.it_init(rep, &ri) && as_lib.it_type(&ri) == 'r') {
                 const char *dn = NULL, *dp = NULL;
-                D.it_rec(&ri, &st);
-                if (D.it_type(&st) == 's') D.it_get(&st, (void *)&dn);
-                D.it_next(&st);
-                if (D.it_type(&st) == 'o') D.it_get(&st, (void *)&dp);
+                as_lib.it_rec(&ri, &st);
+                if (as_lib.it_type(&st) == 's') as_lib.it_get(&st, (void *)&dn);
+                as_lib.it_next(&st);
+                if (as_lib.it_type(&st) == 'o') as_lib.it_get(&st, (void *)&dp);
                 if (dn && dp) snprintf(s->desk, sizeof(s->desk), "%s", dn), snprintf(s->dpath, sizeof(s->dpath), "%s", dp);
             }
-            D.m_unref(rep);
+            as_lib.m_unref(rep);
         }
     }
-    D.err_free(&err);
-    D.flush(bus);
+    as_lib.err_free(&err);
+    as_lib.flush(bus);
     return 0;
 }
 
@@ -32758,17 +32775,17 @@ int gm_axp_pump(goome *g)
 {
     as_st *s = g->ax->plat;
     if (!s) return -1;
-    D.rw(s->bus, 0);
+    as_lib.rw(s->bus, 0);
     void *m;
     int n = 0;
-    while (n++ < 256 && (m = D.pop(s->bus))) {
-        if (D.m_type(m) == 1) {
+    while (n++ < 256 && (m = as_lib.pop(s->bus))) {
+        if (as_lib.m_type(m) == 1) {
             void *r = as_handle(g, s, m);
-            if (r) D.send(s->bus, r, NULL), D.m_unref(r);
+            if (r) as_lib.send(s->bus, r, NULL), as_lib.m_unref(r);
         }
-        D.m_unref(m);
+        as_lib.m_unref(m);
     }
-    D.flush(s->bus);
+    as_lib.flush(s->bus);
     return 30;
 }
 
@@ -32777,38 +32794,1301 @@ void gm_axp_close(goome *g)
     as_st *s = g->ax->plat;
     if (!s) return;
     if (s->desk[0]) {
-        void *m = D.m_call("org.a11y.atspi.Registry", AS_PRE "root", AS_IF "Socket", "Unembed");
+        void *m = as_lib.m_call("org.a11y.atspi.Registry", AS_PRE "root", AS_IF "Socket", "Unembed");
         if (m) {
             as_it it, r;
-            D.it_app(m, &it);
-            D.it_open(&it, 'r', NULL, &r);
+            as_lib.it_app(m, &it);
+            as_lib.it_open(&it, 'r', NULL, &r);
             as_s(&r, s->me);
             as_o(&r, AS_PRE "root");
-            D.it_close(&it, &r);
-            D.send(s->bus, m, NULL);
-            D.m_unref(m);
+            as_lib.it_close(&it, &r);
+            as_lib.send(s->bus, m, NULL);
+            as_lib.m_unref(m);
         }
     }
-    D.flush(s->bus);
-    D.close(s->bus);
-    D.unref(s->bus);
+    as_lib.flush(s->bus);
+    as_lib.close(s->bus);
+    as_lib.unref(s->bus);
     free(s);
     g->ax->plat = NULL;
 }
 #endif
 
 #if defined(_WIN32) && !defined(GOOME_NO_UI)
-int gm_axp_open(goome *g) { return -1; }
-void gm_axp_event(goome *g, int ev, int i, int old) {}
+#include <windows.h>
+#include <ole2.h>
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#define UA_GONE ((HRESULT)0x80040201L)
+
+typedef struct {
+    double left, top, width, height;
+} ua_rect;
+
+typedef struct {
+    LONG ref;
+    goome *g;
+    HWND hwnd;
+    int serial;
+} ua_host;
+
+typedef struct ua_el ua_el;
+
+typedef struct {
+    HRESULT(STDMETHODCALLTYPE *qi)(void *, REFIID, void **);
+    ULONG(STDMETHODCALLTYPE *add)(void *);
+    ULONG(STDMETHODCALLTYPE *rel)(void *);
+    void *m[8];
+} ua_vt;
+
+struct ua_el {
+    const void *simple, *frag, *root, *inv, *tog, *val, *rng, *sel, *seli, *exp;
+    LONG ref;
+    ua_host *host;
+    uint32_t id;
+};
+
+static struct {
+    int tried, ok;
+    HMODULE core, ole;
+    LRESULT(WINAPI *ret)(HWND, WPARAM, LPARAM, void *);
+    HRESULT(WINAPI *host)(HWND, void **);
+    HRESULT(WINAPI *raise)(void *, int);
+    HRESULT(WINAPI *prop)(void *, int, VARIANT, VARIANT);
+    HRESULT(WINAPI *structure)(void *, int, int *, int);
+    BOOL(WINAPI *listening)(void);
+    HRESULT(WINAPI *disconnect)(void *);
+    BSTR(WINAPI *bstr)(const OLECHAR *);
+    SAFEARRAY *(WINAPI *arr)(VARTYPE, LONG, ULONG);
+    HRESULT(WINAPI *put)(SAFEARRAY *, LONG *, void *);
+} ua_lib;
+
+static const GUID ua_iid_unknown = {0x00000000, 0x0000, 0x0000, {0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
+static const GUID ua_iid_simple = {0xd6dd68d1, 0x86fd, 0x4332, {0x86, 0x66, 0x9a, 0xbe, 0xde, 0xa2, 0xd2, 0x4c}};
+static const GUID ua_iid_frag = {0xf7063da8, 0x8359, 0x439c, {0x92, 0x97, 0xbb, 0xc5, 0x29, 0x9a, 0x7d, 0x87}};
+static const GUID ua_iid_root = {0x620ce2a5, 0xab8f, 0x40a9, {0x86, 0xcb, 0xde, 0x3c, 0x75, 0x59, 0x9b, 0x58}};
+static const GUID ua_iid_inv = {0x54fcb24b, 0xe18e, 0x47a2, {0xb4, 0xd3, 0xec, 0xcb, 0xe7, 0x75, 0x99, 0xa2}};
+static const GUID ua_iid_tog = {0x56d00bd0, 0xc4f4, 0x433c, {0xa8, 0x36, 0x1a, 0x52, 0xa5, 0x7e, 0x08, 0x92}};
+static const GUID ua_iid_val = {0xc7935180, 0x6fb3, 0x4201, {0xb1, 0x74, 0x7d, 0xf7, 0x3a, 0xdb, 0xf6, 0x4a}};
+static const GUID ua_iid_rng = {0x36dc7aef, 0x33e6, 0x4691, {0xaf, 0xe1, 0x2b, 0xe7, 0x27, 0x4b, 0x3d, 0x33}};
+static const GUID ua_iid_sel = {0xfb8b03af, 0x3bdf, 0x48d4, {0xbd, 0x36, 0x1a, 0x65, 0x79, 0x3b, 0xe1, 0x68}};
+static const GUID ua_iid_seli = {0x2acad808, 0xb2d4, 0x452d, {0xa4, 0x07, 0x91, 0xff, 0x1a, 0xd1, 0x67, 0xb2}};
+static const GUID ua_iid_exp = {0xd847d3a5, 0xcab0, 0x4a98, {0x8c, 0x32, 0xec, 0xb4, 0x5c, 0x59, 0xad, 0x24}};
+
+enum { UA_INVOKE = 10000, UA_SELECTION = 10001, UA_VALUE = 10002, UA_RANGE = 10003, UA_EXPAND = 10005, UA_SELITEM = 10010, UA_TOGGLE = 10015 };
+
+static int ua_load(void)
+{
+    if (ua_lib.tried) return ua_lib.ok;
+    ua_lib.tried = 1;
+    ua_lib.core = LoadLibraryA("uiautomationcore.dll");
+    ua_lib.ole = LoadLibraryA("oleaut32.dll");
+    if (!ua_lib.core || !ua_lib.ole) return 0;
+    ua_lib.ret = (LRESULT(WINAPI *)(HWND, WPARAM, LPARAM, void *))(void (*)(void))GetProcAddress(ua_lib.core, "UiaReturnRawElementProvider");
+    ua_lib.host = (HRESULT(WINAPI *)(HWND, void **))(void (*)(void))GetProcAddress(ua_lib.core, "UiaHostProviderFromHwnd");
+    ua_lib.raise = (HRESULT(WINAPI *)(void *, int))(void (*)(void))GetProcAddress(ua_lib.core, "UiaRaiseAutomationEvent");
+    ua_lib.prop = (HRESULT(WINAPI *)(void *, int, VARIANT, VARIANT))(void (*)(void))GetProcAddress(ua_lib.core, "UiaRaiseAutomationPropertyChangedEvent");
+    ua_lib.structure = (HRESULT(WINAPI *)(void *, int, int *, int))(void (*)(void))GetProcAddress(ua_lib.core, "UiaRaiseStructureChangedEvent");
+    ua_lib.listening = (BOOL(WINAPI *)(void))(void (*)(void))GetProcAddress(ua_lib.core, "UiaClientsAreListening");
+    ua_lib.disconnect = (HRESULT(WINAPI *)(void *))(void (*)(void))GetProcAddress(ua_lib.core, "UiaDisconnectProvider");
+    ua_lib.bstr = (BSTR(WINAPI *)(const OLECHAR *))(void (*)(void))GetProcAddress(ua_lib.ole, "SysAllocString");
+    ua_lib.arr = (SAFEARRAY * (WINAPI *)(VARTYPE, LONG, ULONG))(void (*)(void))GetProcAddress(ua_lib.ole, "SafeArrayCreateVector");
+    ua_lib.put = (HRESULT(WINAPI *)(SAFEARRAY *, LONG *, void *))(void (*)(void))GetProcAddress(ua_lib.ole, "SafeArrayPutElement");
+    ua_lib.ok = ua_lib.ret && ua_lib.host && ua_lib.raise && ua_lib.prop && ua_lib.bstr && ua_lib.arr && ua_lib.put;
+    return ua_lib.ok;
+}
+
+static ua_el *ua_of(void *p, size_t off) { return (ua_el *)(void *)((char *)p - off); }
+#define UA_EL(p, f) ua_of((p), offsetof(ua_el, f))
+
+static gm_ax *ua_ax(ua_el *e) { return e->host->g ? e->host->g->ax : NULL; }
+
+static int ua_idx(ua_el *e)
+{
+    gm_ax *a = ua_ax(e);
+    if (!a) return -3;
+    if (e->id == 1) return -1;
+    return gm_ax_find(a, e->id) >= 0 ? gm_ax_find(a, e->id) : -3;
+}
+
+static ua_el *ua_new(ua_host *h, uint32_t id);
+
+static BSTR ua_bstr(const char *s, int n)
+{
+    WCHAR tmp[512], *w = tmp;
+    if (n < 0) n = (int)strlen(s);
+    int k = MultiByteToWideChar(CP_UTF8, 0, s, n, NULL, 0);
+    if (k + 1 > 512) w = malloc(sizeof(WCHAR) * (size_t)(k + 1));
+    if (!w) return ua_lib.bstr(L"");
+    MultiByteToWideChar(CP_UTF8, 0, s, n, w, k);
+    w[k] = 0;
+    BSTR b = ua_lib.bstr(w);
+    if (w != tmp) free(w);
+    return b;
+}
+
+static char *ua_utf8(const WCHAR *w)
+{
+    int k = WideCharToMultiByte(CP_UTF8, 0, w ? w : L"", -1, NULL, 0, NULL, NULL);
+    char *s = malloc((size_t)(k > 0 ? k : 1));
+    if (!s) return NULL;
+    s[0] = 0;
+    if (k > 0) WideCharToMultiByte(CP_UTF8, 0, w ? w : L"", -1, s, k, NULL, NULL);
+    return s;
+}
+
+static int ua_has(const gm_ax *a, int i, int pat)
+{
+    if (i < 0) return 0;
+    int k = a->x[i].kind, r = a->n[i].role;
+    switch (pat) {
+    case UA_INVOKE: return (k & GM_AXK_PRESS) && r != GOOME_ROLE_CHECKBOX && r != GOOME_ROLE_RADIO && r != GOOME_ROLE_ITEM && r != GOOME_ROLE_TAB && !(k & GM_AXK_EXPANDABLE);
+    case UA_TOGGLE: return r == GOOME_ROLE_CHECKBOX || (r == GOOME_ROLE_MENUITEM && (k & GM_AXK_CHECKABLE));
+    case UA_SELITEM: return r == GOOME_ROLE_RADIO || r == GOOME_ROLE_ITEM || r == GOOME_ROLE_TAB;
+    case UA_VALUE: return r == GOOME_ROLE_INPUT || r == GOOME_ROLE_COMBO || (r == GOOME_ROLE_BUTTON && (k & GM_AXK_EDITABLE));
+    case UA_RANGE: return (k & GM_AXK_RANGE) != 0;
+    case UA_EXPAND: return (k & GM_AXK_EXPANDABLE) != 0;
+    case UA_SELECTION: {
+        for (int j = i + 1; j < a->count; j++)
+            if (a->n[j].parent == i && (a->n[j].role == GOOME_ROLE_ITEM || a->n[j].role == GOOME_ROLE_TAB)) return 1;
+        return 0;
+    }
+    }
+    return 0;
+}
+
+static int ua_type(const gm_ax *a, int i)
+{
+    switch (a->n[i].role) {
+    case GOOME_ROLE_BUTTON: return 50000;
+    case GOOME_ROLE_CHECKBOX: return 50002;
+    case GOOME_ROLE_RADIO: return 50013;
+    case GOOME_ROLE_SLIDER: return 50015;
+    case GOOME_ROLE_TEXT: return 50020;
+    case GOOME_ROLE_INPUT: return 50004;
+    case GOOME_ROLE_COMBO: return 50003;
+    case GOOME_ROLE_LIST: return 50008;
+    case GOOME_ROLE_ITEM: return 50007;
+    case GOOME_ROLE_TAB: return 50019;
+    case GOOME_ROLE_MENU: return 50011;
+    case GOOME_ROLE_MENUITEM: return 50011;
+    case GOOME_ROLE_TABLE: return 50036;
+    case GOOME_ROLE_TREE: return 50024;
+    case GOOME_ROLE_PROGRESS: return 50012;
+    case GOOME_ROLE_IMAGE: return 50006;
+    case GOOME_ROLE_DIALOG: return 50032;
+    case GOOME_ROLE_GROUP:
+        for (int j = i + 1; j < a->count; j++)
+            if (a->n[j].parent == i) return a->n[j].role == GOOME_ROLE_TAB ? 50018 : a->n[j].role == GOOME_ROLE_MENU ? 50010 : 50026;
+        return 50026;
+    }
+    return 50033;
+}
+
+static void ua_screen(ua_el *e, const goome_a11y_node *n, ua_rect *r)
+{
+    goome *g = e->host->g;
+    POINT p = {0, 0};
+    ClientToScreen(e->host->hwnd, &p);
+    double s = g->nmon > 0 && g->mon[0].scale > 0 ? g->mon[0].scale : 1;
+    r->left = p.x + n->x * s, r->top = p.y + n->y * s, r->width = n->w * s, r->height = n->h * s;
+}
+
+static HRESULT ua_give(ua_el *e, void **out, const void *field)
+{
+    *out = (void *)field;
+    InterlockedIncrement(&e->ref);
+    return S_OK;
+}
+
+static HRESULT ua_qi_el(ua_el *e, REFIID r, void **out)
+{
+    int i = ua_idx(e);
+    gm_ax *a = ua_ax(e);
+    if (!out) return E_POINTER;
+    *out = NULL;
+    if (IsEqualGUID(r, &ua_iid_unknown) || IsEqualGUID(r, &ua_iid_simple)) return ua_give(e, out, &e->simple);
+    if (IsEqualGUID(r, &ua_iid_frag)) return ua_give(e, out, &e->frag);
+    if (IsEqualGUID(r, &ua_iid_root) && e->id == 1) return ua_give(e, out, &e->root);
+    if (!a || i < 0) return E_NOINTERFACE;
+    if (IsEqualGUID(r, &ua_iid_inv) && ua_has(a, i, UA_INVOKE)) return ua_give(e, out, &e->inv);
+    if (IsEqualGUID(r, &ua_iid_tog) && ua_has(a, i, UA_TOGGLE)) return ua_give(e, out, &e->tog);
+    if (IsEqualGUID(r, &ua_iid_val) && ua_has(a, i, UA_VALUE)) return ua_give(e, out, &e->val);
+    if (IsEqualGUID(r, &ua_iid_rng) && ua_has(a, i, UA_RANGE)) return ua_give(e, out, &e->rng);
+    if (IsEqualGUID(r, &ua_iid_sel) && ua_has(a, i, UA_SELECTION)) return ua_give(e, out, &e->sel);
+    if (IsEqualGUID(r, &ua_iid_seli) && ua_has(a, i, UA_SELITEM)) return ua_give(e, out, &e->seli);
+    if (IsEqualGUID(r, &ua_iid_exp) && ua_has(a, i, UA_EXPAND)) return ua_give(e, out, &e->exp);
+    return E_NOINTERFACE;
+}
+
+static ULONG ua_add_el(ua_el *e) { return (ULONG)InterlockedIncrement(&e->ref); }
+
+static ULONG ua_rel_el(ua_el *e)
+{
+    LONG r = InterlockedDecrement(&e->ref);
+    if (r == 0) {
+        if (InterlockedDecrement(&e->host->ref) == 0) free(e->host);
+        free(e);
+    }
+    return (ULONG)r;
+}
+
+#define UA_IUNK(name, field)                                                                                                   \
+    static HRESULT STDMETHODCALLTYPE name##_qi(void *t, REFIID r, void **o) { return ua_qi_el(UA_EL(t, field), r, o); } \
+    static ULONG STDMETHODCALLTYPE name##_add(void *t) { return ua_add_el(UA_EL(t, field)); }                           \
+    static ULONG STDMETHODCALLTYPE name##_rel(void *t) { return ua_rel_el(UA_EL(t, field)); }
+
+UA_IUNK(ua_s, simple)
+UA_IUNK(ua_f, frag)
+UA_IUNK(ua_r, root)
+UA_IUNK(ua_i, inv)
+UA_IUNK(ua_t, tog)
+UA_IUNK(ua_v, val)
+UA_IUNK(ua_g, rng)
+UA_IUNK(ua_l, sel)
+UA_IUNK(ua_e, seli)
+UA_IUNK(ua_x, exp)
+
+static void ua_act(ua_el *e, const char *verb, const char *text)
+{
+    if (e->host->g) gm_ax_act(e->host->g, e->id, verb, text);
+}
+
+static HRESULT STDMETHODCALLTYPE ua_s_opts(void *t, int *o)
+{
+    *o = 2;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE ua_s_pattern(void *t, int pat, IUnknown **o)
+{
+    ua_el *e = UA_EL(t, simple);
+    *o = NULL;
+    int i = ua_idx(e);
+    gm_ax *a = ua_ax(e);
+    if (i == -3) return UA_GONE;
+    if (!ua_has(a, i, pat)) return S_OK;
+    const void *f = pat == UA_INVOKE ? (const void *)&e->inv : pat == UA_TOGGLE ? (const void *)&e->tog : pat == UA_VALUE ? (const void *)&e->val : pat == UA_RANGE ? (const void *)&e->rng
+                  : pat == UA_SELECTION ? (const void *)&e->sel : pat == UA_SELITEM ? (const void *)&e->seli : (const void *)&e->exp;
+    return ua_give(e, (void **)o, f);
+}
+
+static void ua_vbool(VARIANT *v, int on)
+{
+    V_VT(v) = VT_BOOL;
+    V_BOOL(v) = on ? VARIANT_TRUE : VARIANT_FALSE;
+}
+
+static HRESULT STDMETHODCALLTYPE ua_s_prop(void *t, int prop, VARIANT *v)
+{
+    ua_el *e = UA_EL(t, simple);
+    V_VT(v) = VT_EMPTY;
+    int i = ua_idx(e);
+    gm_ax *a = ua_ax(e);
+    if (i == -3) return UA_GONE;
+    if (i == -1) {
+        if (prop == 30024) V_VT(v) = VT_BSTR, V_BSTR(v) = ua_bstr("goome", -1);
+        return S_OK;
+    }
+    const goome_a11y_node *n = &a->n[i];
+    int k = a->x[i].kind;
+    char id[16];
+    switch (prop) {
+    case 30003: V_VT(v) = VT_I4, V_I4(v) = ua_type(a, i); break;
+    case 30005: V_VT(v) = VT_BSTR, V_BSTR(v) = ua_bstr(n->label, -1); break;
+    case 30011:
+        snprintf(id, sizeof(id), "%u", (unsigned)n->id);
+        V_VT(v) = VT_BSTR, V_BSTR(v) = ua_bstr(id, -1);
+        break;
+    case 30012: V_VT(v) = VT_BSTR, V_BSTR(v) = ua_bstr("goome", -1); break;
+    case 30024: V_VT(v) = VT_BSTR, V_BSTR(v) = ua_bstr("goome", -1); break;
+    case 30002: V_VT(v) = VT_I4, V_I4(v) = (LONG)GetCurrentProcessId(); break;
+    case 30008: ua_vbool(v, (n->states & GOOME_A11Y_FOCUSED) != 0); break;
+    case 30009: ua_vbool(v, (k & GM_AXK_FOCUSABLE) != 0); break;
+    case 30010: ua_vbool(v, !(n->states & GOOME_A11Y_DISABLED)); break;
+    case 30016: ua_vbool(v, 1); break;
+    case 30017: ua_vbool(v, n->role != GOOME_ROLE_GROUP && n->role != GOOME_ROLE_WINDOW); break;
+    case 30019: ua_vbool(v, (k & GM_AXK_PASSWORD) != 0); break;
+    case 30022: ua_vbool(v, (k & GM_AXK_HIDDEN) != 0); break;
+    }
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE ua_s_host(void *t, void **o)
+{
+    ua_el *e = UA_EL(t, simple);
+    *o = NULL;
+    if (e->id == 1 && e->host->g) return ua_lib.host(e->host->hwnd, o);
+    return S_OK;
+}
+
+static ua_el *ua_at(ua_el *e, int i)
+{
+    gm_ax *a = ua_ax(e);
+    if (i == -1) return ua_new(e->host, 1);
+    if (!a || i < 0 || i >= a->count) return NULL;
+    return ua_new(e->host, a->n[i].id);
+}
+
+static HRESULT STDMETHODCALLTYPE ua_f_nav(void *t, int dir, void **o)
+{
+    ua_el *e = UA_EL(t, frag);
+    *o = NULL;
+    int i = ua_idx(e);
+    gm_ax *a = ua_ax(e);
+    if (i == -3) return UA_GONE;
+    int pick = -3;
+    if (dir == 0) pick = i == -1 ? -3 : a->n[i].parent;
+    else if (dir == 3 || dir == 4) {
+        for (int j = i + 1; j < a->count; j++)
+            if (a->n[j].parent == i) {
+                pick = j;
+                if (dir == 3) break;
+            }
+    } else if (i >= 0 && (dir == 1 || dir == 2)) {
+        int par = a->n[i].parent;
+        if (dir == 1) {
+            for (int j = i + 1; j < a->count && pick == -3; j++)
+                if (a->n[j].parent == par) pick = j;
+        } else
+            for (int j = i - 1; j >= 0 && pick == -3; j--)
+                if (a->n[j].parent == par) pick = j;
+    }
+    if (pick == -3) return S_OK;
+    ua_el *r = ua_at(e, pick);
+    if (r) *o = (void *)&r->frag;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE ua_f_rid(void *t, SAFEARRAY **o)
+{
+    ua_el *e = UA_EL(t, frag);
+    *o = NULL;
+    if (e->id == 1) return S_OK;
+    if (ua_idx(e) == -3) return UA_GONE;
+    SAFEARRAY *s = ua_lib.arr(VT_I4, 0, 2);
+    if (!s) return E_OUTOFMEMORY;
+    LONG k = 0, v = 3;
+    ua_lib.put(s, &k, &v);
+    k = 1, v = (LONG)e->id;
+    ua_lib.put(s, &k, &v);
+    *o = s;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE ua_f_box(void *t, ua_rect *r)
+{
+    ua_el *e = UA_EL(t, frag);
+    memset(r, 0, sizeof(*r));
+    int i = ua_idx(e);
+    if (i == -3) return UA_GONE;
+    if (i >= 0) ua_screen(e, &ua_ax(e)->n[i], r);
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE ua_f_embedded(void *t, SAFEARRAY **o)
+{
+    *o = NULL;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE ua_f_focus(void *t)
+{
+    ua_el *e = UA_EL(t, frag);
+    int i = ua_idx(e);
+    if (i == -3) return UA_GONE;
+    if (i >= 0) ua_act(e, "focus", NULL);
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE ua_f_root(void *t, void **o)
+{
+    ua_el *e = UA_EL(t, frag), *r = ua_new(e->host, 1);
+    *o = r ? (void *)&r->root : NULL;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE ua_r_point(void *t, double x, double y, void **o)
+{
+    ua_el *e = UA_EL(t, root);
+    gm_ax *a = ua_ax(e);
+    *o = NULL;
+    if (!a) return UA_GONE;
+    int best = -3;
+    for (int i = 0; i < a->count; i++) {
+        ua_rect r;
+        if (a->x[i].kind & GM_AXK_HIDDEN) continue;
+        ua_screen(e, &a->n[i], &r);
+        if (x >= r.left && y >= r.top && x < r.left + r.width && y < r.top + r.height) best = i;
+    }
+    if (best == -3) return S_OK;
+    ua_el *r = ua_at(e, best);
+    if (r) *o = (void *)&r->frag;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE ua_r_focus(void *t, void **o)
+{
+    ua_el *e = UA_EL(t, root);
+    gm_ax *a = ua_ax(e);
+    *o = NULL;
+    if (!a) return UA_GONE;
+    for (int i = 0; i < a->count; i++)
+        if (a->n[i].states & GOOME_A11Y_FOCUSED) {
+            ua_el *r = ua_at(e, i);
+            if (r) *o = (void *)&r->frag;
+            break;
+        }
+    return S_OK;
+}
+
+static const goome_a11y_node *ua_node(ua_el *e)
+{
+    int i = ua_idx(e);
+    return i >= 0 ? &ua_ax(e)->n[i] : NULL;
+}
+
+static HRESULT STDMETHODCALLTYPE ua_i_invoke(void *t)
+{
+    ua_el *e = UA_EL(t, inv);
+    if (!ua_node(e)) return UA_GONE;
+    ua_act(e, "press", NULL);
+    if (ua_lib.raise) ua_lib.raise(&e->simple, 20009);
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE ua_t_toggle(void *t)
+{
+    ua_el *e = UA_EL(t, tog);
+    if (!ua_node(e)) return UA_GONE;
+    ua_act(e, "press", NULL);
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE ua_t_state(void *t, int *o)
+{
+    const goome_a11y_node *n = ua_node(UA_EL(t, tog));
+    if (!n) return UA_GONE;
+    *o = (n->states & GOOME_A11Y_CHECKED) ? 1 : 0;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE ua_v_set(void *t, const WCHAR *w)
+{
+    ua_el *e = UA_EL(t, val);
+    if (!ua_node(e)) return UA_GONE;
+    char *s = ua_utf8(w);
+    if (!s) return E_OUTOFMEMORY;
+    ua_act(e, "set", s);
+    free(s);
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE ua_v_get(void *t, BSTR *o)
+{
+    ua_el *e = UA_EL(t, val);
+    int i = ua_idx(e), len;
+    if (i < 0) return UA_GONE;
+    const char *s = gm_ax_str(ua_ax(e), i, &len);
+    *o = ua_bstr(s, len);
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE ua_v_ro(void *t, BOOL *o)
+{
+    ua_el *e = UA_EL(t, val);
+    int i = ua_idx(e);
+    if (i < 0) return UA_GONE;
+    *o = !(ua_ax(e)->x[i].kind & GM_AXK_EDITABLE);
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE ua_g_set(void *t, double d)
+{
+    ua_el *e = UA_EL(t, rng);
+    char s[40];
+    if (!ua_node(e)) return UA_GONE;
+    snprintf(s, sizeof(s), "%.17g", d);
+    ua_act(e, "set", s);
+    return S_OK;
+}
+
+static HRESULT ua_g_num(void *t, double *o, int what)
+{
+    ua_el *e = UA_EL(t, rng);
+    const goome_a11y_node *n = ua_node(e);
+    if (!n) return UA_GONE;
+    double span = n->max - n->min;
+    *o = what == 0 ? n->num : what == 1 ? n->max : what == 2 ? n->min : what == 3 ? span / 10 : span >= 2 ? 1 : span / 100;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE ua_g_val(void *t, double *o) { return ua_g_num(t, o, 0); }
+static HRESULT STDMETHODCALLTYPE ua_g_max(void *t, double *o) { return ua_g_num(t, o, 1); }
+static HRESULT STDMETHODCALLTYPE ua_g_min(void *t, double *o) { return ua_g_num(t, o, 2); }
+static HRESULT STDMETHODCALLTYPE ua_g_large(void *t, double *o) { return ua_g_num(t, o, 3); }
+static HRESULT STDMETHODCALLTYPE ua_g_small(void *t, double *o) { return ua_g_num(t, o, 4); }
+
+static HRESULT STDMETHODCALLTYPE ua_g_ro(void *t, BOOL *o)
+{
+    ua_el *e = UA_EL(t, rng);
+    int i = ua_idx(e);
+    if (i < 0) return UA_GONE;
+    *o = !(ua_ax(e)->x[i].kind & GM_AXK_EDITABLE);
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE ua_l_get(void *t, SAFEARRAY **o)
+{
+    ua_el *e = UA_EL(t, sel);
+    gm_ax *a = ua_ax(e);
+    int i = ua_idx(e), n = 0;
+    *o = NULL;
+    if (i < 0) return UA_GONE;
+    for (int j = i + 1; j < a->count; j++)
+        if (a->n[j].parent == i && (a->n[j].states & GOOME_A11Y_SELECTED)) n++;
+    SAFEARRAY *s = ua_lib.arr(VT_UNKNOWN, 0, (ULONG)n);
+    if (!s) return E_OUTOFMEMORY;
+    LONG k = 0;
+    for (int j = i + 1; j < a->count; j++)
+        if (a->n[j].parent == i && (a->n[j].states & GOOME_A11Y_SELECTED)) {
+            ua_el *c = ua_new(e->host, a->n[j].id);
+            if (!c) continue;
+            ua_lib.put(s, &k, &c->simple);
+            ua_rel_el(c);
+            k++;
+        }
+    *o = s;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE ua_l_multi(void *t, BOOL *o)
+{
+    *o = FALSE;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE ua_e_select(void *t)
+{
+    ua_el *e = UA_EL(t, seli);
+    const goome_a11y_node *n = ua_node(e);
+    if (!n) return UA_GONE;
+    if (!(n->states & (GOOME_A11Y_SELECTED | GOOME_A11Y_CHECKED))) ua_act(e, "press", NULL);
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE ua_e_remove(void *t) { return S_OK; }
+
+static HRESULT STDMETHODCALLTYPE ua_e_is(void *t, BOOL *o)
+{
+    const goome_a11y_node *n = ua_node(UA_EL(t, seli));
+    if (!n) return UA_GONE;
+    *o = (n->states & (GOOME_A11Y_SELECTED | GOOME_A11Y_CHECKED)) != 0;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE ua_e_box(void *t, void **o)
+{
+    ua_el *e = UA_EL(t, seli);
+    const goome_a11y_node *n = ua_node(e);
+    *o = NULL;
+    if (!n) return UA_GONE;
+    ua_el *p = ua_at(e, n->parent);
+    if (p) *o = (void *)&p->simple;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE ua_x_expand(void *t)
+{
+    ua_el *e = UA_EL(t, exp);
+    if (!ua_node(e)) return UA_GONE;
+    ua_act(e, "expand", NULL);
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE ua_x_collapse(void *t)
+{
+    ua_el *e = UA_EL(t, exp);
+    if (!ua_node(e)) return UA_GONE;
+    ua_act(e, "collapse", NULL);
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE ua_x_state(void *t, int *o)
+{
+    const goome_a11y_node *n = ua_node(UA_EL(t, exp));
+    if (!n) return UA_GONE;
+    *o = (n->states & GOOME_A11Y_EXPANDED) ? 1 : 0;
+    return S_OK;
+}
+
+#define UA_VT(name, ...) static const ua_vt name = {name##_qi, name##_add, name##_rel, {__VA_ARGS__}}
+
+UA_VT(ua_s, (void *)ua_s_opts, (void *)ua_s_pattern, (void *)ua_s_prop, (void *)ua_s_host);
+UA_VT(ua_f, (void *)ua_f_nav, (void *)ua_f_rid, (void *)ua_f_box, (void *)ua_f_embedded, (void *)ua_f_focus, (void *)ua_f_root);
+UA_VT(ua_r, (void *)ua_r_point, (void *)ua_r_focus);
+UA_VT(ua_i, (void *)ua_i_invoke);
+UA_VT(ua_t, (void *)ua_t_toggle, (void *)ua_t_state);
+UA_VT(ua_v, (void *)ua_v_set, (void *)ua_v_get, (void *)ua_v_ro);
+UA_VT(ua_g, (void *)ua_g_set, (void *)ua_g_val, (void *)ua_g_ro, (void *)ua_g_max, (void *)ua_g_min, (void *)ua_g_large, (void *)ua_g_small);
+UA_VT(ua_l, (void *)ua_l_get, (void *)ua_l_multi, (void *)ua_l_multi);
+UA_VT(ua_e, (void *)ua_e_select, (void *)ua_e_select, (void *)ua_e_remove, (void *)ua_e_is, (void *)ua_e_box);
+UA_VT(ua_x, (void *)ua_x_expand, (void *)ua_x_collapse, (void *)ua_x_state);
+
+static ua_el *ua_new(ua_host *h, uint32_t id)
+{
+    ua_el *e = calloc(1, sizeof(*e));
+    if (!e) return NULL;
+    e->simple = &ua_s, e->frag = &ua_f, e->root = &ua_r, e->inv = &ua_i, e->tog = &ua_t, e->val = &ua_v, e->rng = &ua_g, e->sel = &ua_l, e->seli = &ua_e, e->exp = &ua_x;
+    e->ref = 1, e->host = h, e->id = id;
+    InterlockedIncrement(&h->ref);
+    return e;
+}
+
+int gm_axp_open(goome *g)
+{
+    if (!ua_load()) return -1;
+    ua_host *h = calloc(1, sizeof(*h));
+    if (!h) return -1;
+    h->ref = 1, h->g = g;
+    g->ax->plat = h;
+    return 0;
+}
+
+int gm_uia_obj(goome *g, void *hwnd, uintptr_t wp, intptr_t lp, intptr_t *out)
+{
+    if (!g || !g->ax || g->ax->plat_state <= 0 || (LONG)lp != -25) return 0;
+    ua_host *h = g->ax->plat;
+    h->hwnd = (HWND)hwnd;
+    ua_el *r = ua_new(h, 1);
+    if (!r) return 0;
+    *out = (intptr_t)ua_lib.ret((HWND)hwnd, (WPARAM)wp, (LPARAM)lp, &r->simple);
+    ua_rel_el(r);
+    return 1;
+}
+
+static void ua_changed(ua_host *h, uint32_t id, int prop, VARIANT now)
+{
+    ua_el *e = ua_new(h, id);
+    if (!e) return;
+    VARIANT old;
+    V_VT(&old) = VT_EMPTY;
+    ua_lib.prop(&e->simple, prop, old, now);
+    ua_rel_el(e);
+}
+
+void gm_axp_event(goome *g, int ev, int i, int old)
+{
+    ua_host *h = g->ax ? g->ax->plat : NULL;
+    if (!h || !h->hwnd || (ua_lib.listening && !ua_lib.listening())) return;
+    gm_ax *a = g->ax;
+    VARIANT v;
+    switch (ev) {
+    case GM_AXE_FOCUS: {
+        ua_el *e = ua_new(h, a->n[i].id);
+        if (e) ua_lib.raise(&e->simple, 20005), ua_rel_el(e);
+        break;
+    }
+    case GM_AXE_NAME:
+        V_VT(&v) = VT_BSTR, V_BSTR(&v) = ua_bstr(a->n[i].label, -1);
+        ua_changed(h, a->n[i].id, 30005, v);
+        break;
+    case GM_AXE_VALUE:
+        if (a->x[i].kind & GM_AXK_RANGE) {
+            V_VT(&v) = VT_R8, V_R8(&v) = a->n[i].num;
+            ua_changed(h, a->n[i].id, 30047, v);
+        } else if (ua_has(a, i, UA_VALUE)) {
+            int len;
+            const char *s = gm_ax_str(a, i, &len);
+            V_VT(&v) = VT_BSTR, V_BSTR(&v) = ua_bstr(s, len);
+            ua_changed(h, a->n[i].id, 30045, v);
+        }
+        break;
+    case GM_AXE_STATE: {
+        int st = a->n[i].states, d = st ^ old;
+        if ((d & GOOME_A11Y_CHECKED) && ua_has(a, i, UA_TOGGLE)) V_VT(&v) = VT_I4, V_I4(&v) = (st & GOOME_A11Y_CHECKED) ? 1 : 0, ua_changed(h, a->n[i].id, 30086, v);
+        if (d & GOOME_A11Y_EXPANDED) V_VT(&v) = VT_I4, V_I4(&v) = (st & GOOME_A11Y_EXPANDED) ? 1 : 0, ua_changed(h, a->n[i].id, 30070, v);
+        if ((d & (GOOME_A11Y_SELECTED | GOOME_A11Y_CHECKED)) && ua_has(a, i, UA_SELITEM)) ua_vbool(&v, (st & (GOOME_A11Y_SELECTED | GOOME_A11Y_CHECKED)) != 0), ua_changed(h, a->n[i].id, 30079, v);
+        break;
+    }
+    case GM_AXE_ADD:
+    case GM_AXE_REMOVE:
+        if (ua_lib.structure && h->serial != a->serial) {
+            h->serial = a->serial;
+            ua_el *e = ua_new(h, 1);
+            if (e) ua_lib.structure(&e->simple, 2, NULL, 0), ua_rel_el(e);
+        }
+        break;
+    }
+}
+
 int gm_axp_pump(goome *g) { return -1; }
-void gm_axp_close(goome *g) {}
+
+void gm_axp_close(goome *g)
+{
+    ua_host *h = g->ax->plat;
+    if (!h) return;
+    if (h->hwnd && ua_lib.ret) ua_lib.ret(h->hwnd, 0, 0, NULL);
+    h->g = NULL;
+    if (InterlockedDecrement(&h->ref) == 0) free(h);
+    g->ax->plat = NULL;
+}
 #endif
 
 #if defined(__APPLE__) && !defined(GOOME_NO_UI)
-int gm_axp_open(goome *g) { return -1; }
-void gm_axp_event(goome *g, int ev, int i, int old) {}
+#include <dlfcn.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+typedef void *mx_id;
+typedef void *mx_sel;
+#if defined(__aarch64__) || defined(__arm64__)
+typedef _Bool mx_bool;
+#define MX_B "B"
+#else
+typedef signed char mx_bool;
+#define MX_B "c"
+#endif
+typedef struct {
+    double x, y;
+} mx_pt;
+typedef struct {
+    double w, h;
+} mx_sz;
+typedef struct {
+    mx_pt o;
+    mx_sz s;
+} mx_rect;
+typedef struct {
+    unsigned long loc, len;
+} mx_range;
+#define MX_RECT "{CGRect={CGPoint=dd}{CGSize=dd}}"
+
+typedef struct {
+    goome *g;
+    mx_id view;
+    uint32_t *ids;
+    mx_id *els;
+    int n, cap;
+} mx_host;
+
+static struct {
+    int tried, ok, view_done;
+    mx_id (*cls)(const char *);
+    mx_sel (*sel)(const char *);
+    void (*msg)(void);
+    void (*stret)(void);
+    mx_id (*alloc_pair)(mx_id, const char *, size_t);
+    void (*reg_pair)(mx_id);
+    mx_bool (*add)(mx_id, mx_sel, void (*)(void), const char *);
+    void (*post)(mx_id, mx_id);
+    mx_id *n_focus, *n_value, *n_title, *n_gone, *n_made;
+    mx_id node;
+    mx_host *hosts[16];
+    int nh;
+} mx_lib;
+
+static mx_sel mx_s(const char *s) { return mx_lib.sel(s); }
+static mx_id mx_i(mx_id o, const char *s) { return o ? ((mx_id(*)(mx_id, mx_sel))mx_lib.msg)(o, mx_s(s)) : NULL; }
+static mx_id mx_ii(mx_id o, const char *s, mx_id a) { return ((mx_id(*)(mx_id, mx_sel, mx_id))mx_lib.msg)(o, mx_s(s), a); }
+static void mx_v(mx_id o, const char *s) { ((void (*)(mx_id, mx_sel))mx_lib.msg)(o, mx_s(s)); }
+static int mx_b(mx_id o, const char *s) { return o && ((mx_bool(*)(mx_id, mx_sel))mx_lib.msg)(o, mx_s(s)); }
+static double mx_d(mx_id o, const char *s) { return o ? ((double (*)(mx_id, mx_sel))mx_lib.msg)(o, mx_s(s)) : 0; }
+static mx_id mx_str(const char *s) { return ((mx_id(*)(mx_id, mx_sel, const char *))mx_lib.msg)(mx_lib.cls("NSString"), mx_s("stringWithUTF8String:"), s ? s : ""); }
+static mx_id mx_num(double v) { return ((mx_id(*)(mx_id, mx_sel, double))mx_lib.msg)(mx_lib.cls("NSNumber"), mx_s("numberWithDouble:"), v); }
+static mx_id mx_int(long v) { return ((mx_id(*)(mx_id, mx_sel, long))mx_lib.msg)(mx_lib.cls("NSNumber"), mx_s("numberWithLong:"), v); }
+static const char *mx_utf8(mx_id s) { return s ? ((const char *(*)(mx_id, mx_sel))mx_lib.msg)(s, mx_s("UTF8String")) : NULL; }
+
+static mx_rect mx_r(mx_id o, const char *s)
+{
+#if defined(__aarch64__) || defined(__arm64__)
+    return ((mx_rect(*)(mx_id, mx_sel))mx_lib.msg)(o, mx_s(s));
+#else
+    return ((mx_rect(*)(mx_id, mx_sel))mx_lib.stret)(o, mx_s(s));
+#endif
+}
+
+static mx_rect mx_rr(mx_id o, const char *s, mx_rect a)
+{
+#if defined(__aarch64__) || defined(__arm64__)
+    return ((mx_rect(*)(mx_id, mx_sel, mx_rect))mx_lib.msg)(o, mx_s(s), a);
+#else
+    return ((mx_rect(*)(mx_id, mx_sel, mx_rect))mx_lib.stret)(o, mx_s(s), a);
+#endif
+}
+
+static mx_rect mx_rri(mx_id o, const char *s, mx_rect a, mx_id b)
+{
+#if defined(__aarch64__) || defined(__arm64__)
+    return ((mx_rect(*)(mx_id, mx_sel, mx_rect, mx_id))mx_lib.msg)(o, mx_s(s), a, b);
+#else
+    return ((mx_rect(*)(mx_id, mx_sel, mx_rect, mx_id))mx_lib.stret)(o, mx_s(s), a, b);
+#endif
+}
+
+static mx_host *mx_host_of_view(mx_id v)
+{
+    for (int i = 0; i < mx_lib.nh; i++)
+        if (mx_lib.hosts[i]->view == v) return mx_lib.hosts[i];
+    return NULL;
+}
+
+static int mx_el_at(mx_id el, mx_host **h)
+{
+    for (int i = 0; i < mx_lib.nh; i++)
+        for (int k = 0; k < mx_lib.hosts[i]->n; k++)
+            if (mx_lib.hosts[i]->els[k] == el) {
+                *h = mx_lib.hosts[i];
+                gm_ax *a = mx_lib.hosts[i]->g ? mx_lib.hosts[i]->g->ax : NULL;
+                return a ? gm_ax_find(a, mx_lib.hosts[i]->ids[k]) : -3;
+            }
+    *h = NULL;
+    return -3;
+}
+
+static mx_id mx_el(mx_host *h, uint32_t id, int make)
+{
+    for (int k = 0; k < h->n; k++)
+        if (h->ids[k] == id) return h->els[k];
+    if (!make) return NULL;
+    if (h->n == h->cap) {
+        int nc = h->cap ? h->cap * 2 : 64;
+        uint32_t *ni = realloc(h->ids, sizeof(*ni) * (size_t)nc);
+        if (!ni) return NULL;
+        h->ids = ni;
+        mx_id *ne = realloc(h->els, sizeof(*ne) * (size_t)nc);
+        if (!ne) return NULL;
+        h->els = ne, h->cap = nc;
+    }
+    mx_id e = mx_i(mx_i(mx_lib.node, "alloc"), "init");
+    if (!e) return NULL;
+    h->ids[h->n] = id, h->els[h->n] = e;
+    h->n++;
+    return e;
+}
+
+static void mx_drop(mx_host *h, uint32_t id)
+{
+    for (int k = 0; k < h->n; k++)
+        if (h->ids[k] == id) {
+            mx_id e = h->els[k];
+            h->ids[k] = h->ids[h->n - 1], h->els[k] = h->els[h->n - 1];
+            h->n--;
+            if (mx_lib.post && mx_lib.n_gone) mx_lib.post(e, *mx_lib.n_gone);
+            mx_v(e, "release");
+            return;
+        }
+}
+
+static mx_id mx_node_el(mx_host *h, int i)
+{
+    if (i < 0) return h->view;
+    return mx_el(h, h->g->ax->n[i].id, 1);
+}
+
+static mx_id mx_kids(mx_host *h, int parent)
+{
+    mx_id arr = mx_i(mx_lib.cls("NSMutableArray"), "array");
+    gm_ax *a = h && h->g ? h->g->ax : NULL;
+    if (!a) return arr;
+    for (int i = 0; i < a->count; i++)
+        if (a->n[i].parent == parent) {
+            mx_id e = mx_node_el(h, i);
+            if (e) mx_ii(arr, "addObject:", e);
+        }
+    return arr;
+}
+
+static mx_rect mx_frame(mx_host *h, const goome_a11y_node *n)
+{
+    mx_rect b = mx_r(h->view, "bounds"), r;
+    r.o.x = n->x, r.s.w = n->w, r.s.h = n->h;
+    r.o.y = mx_b(h->view, "isFlipped") ? n->y : b.s.h - n->y - n->h;
+    r = mx_rri(h->view, "convertRect:toView:", r, NULL);
+    mx_id w = mx_i(h->view, "window");
+    return w ? mx_rr(w, "convertRectToScreen:", r) : r;
+}
+
+static const char *mx_role_of(const gm_ax *a, int i)
+{
+    const goome_a11y_node *n = &a->n[i];
+    int k = a->x[i].kind, p = n->parent;
+    switch (n->role) {
+    case GOOME_ROLE_BUTTON: return "AXButton";
+    case GOOME_ROLE_CHECKBOX: return "AXCheckBox";
+    case GOOME_ROLE_RADIO: return "AXRadioButton";
+    case GOOME_ROLE_SLIDER: return "AXSlider";
+    case GOOME_ROLE_TEXT: return "AXStaticText";
+    case GOOME_ROLE_INPUT: return (k & GM_AXK_MULTILINE) ? "AXTextArea" : "AXTextField";
+    case GOOME_ROLE_COMBO: return "AXPopUpButton";
+    case GOOME_ROLE_LIST: return "AXList";
+    case GOOME_ROLE_ITEM: return p >= 0 && a->n[p].role == GOOME_ROLE_LIST ? "AXMenuItem" : "AXStaticText";
+    case GOOME_ROLE_TAB: return "AXRadioButton";
+    case GOOME_ROLE_MENU: return p >= 0 && a->n[p].role == GOOME_ROLE_GROUP ? "AXMenuBarItem" : "AXMenuItem";
+    case GOOME_ROLE_MENUITEM: return "AXMenuItem";
+    case GOOME_ROLE_TREE: return "AXDisclosureTriangle";
+    case GOOME_ROLE_PROGRESS: return n->num < 0 ? "AXBusyIndicator" : "AXProgressIndicator";
+    case GOOME_ROLE_IMAGE: return "AXImage";
+    case GOOME_ROLE_GROUP:
+        for (int j = i + 1; j < a->count; j++)
+            if (a->n[j].parent == i) return a->n[j].role == GOOME_ROLE_TAB ? "AXTabGroup" : a->n[j].role == GOOME_ROLE_MENU ? "AXMenuBar" : "AXGroup";
+        return "AXGroup";
+    }
+    return "AXGroup";
+}
+
+static int mx_titled(int role) { return role == GOOME_ROLE_BUTTON || role == GOOME_ROLE_CHECKBOX || role == GOOME_ROLE_RADIO || role == GOOME_ROLE_TAB || role == GOOME_ROLE_MENU || role == GOOME_ROLE_MENUITEM || role == GOOME_ROLE_TREE || role == GOOME_ROLE_ITEM; }
+
+#define MX_NODE(self)                    \
+    mx_host *h;                          \
+    int i = mx_el_at((self), &h);        \
+    gm_ax *a = i >= 0 ? h->g->ax : NULL; \
+    (void)a
+
+static mx_id mx_n_role(mx_id self, mx_sel s)
+{
+    MX_NODE(self);
+    return mx_str(i >= 0 ? mx_role_of(a, i) : "AXUnknown");
+}
+
+static mx_id mx_n_subrole(mx_id self, mx_sel s)
+{
+    MX_NODE(self);
+    if (i >= 0 && (a->x[i].kind & GM_AXK_PASSWORD)) return mx_str("AXSecureTextField");
+    if (i >= 0 && a->n[i].role == GOOME_ROLE_DIALOG) return mx_str("AXDialog");
+    return NULL;
+}
+
+static mx_id mx_n_label(mx_id self, mx_sel s)
+{
+    MX_NODE(self);
+    return i >= 0 && !mx_titled(a->n[i].role) && a->n[i].role != GOOME_ROLE_TEXT ? mx_str(a->n[i].label) : NULL;
+}
+
+static mx_id mx_n_title(mx_id self, mx_sel s)
+{
+    MX_NODE(self);
+    return i >= 0 && mx_titled(a->n[i].role) ? mx_str(a->n[i].label) : NULL;
+}
+
+static mx_id mx_n_value(mx_id self, mx_sel s)
+{
+    MX_NODE(self);
+    if (i < 0) return NULL;
+    const goome_a11y_node *n = &a->n[i];
+    int len;
+    switch (n->role) {
+    case GOOME_ROLE_CHECKBOX:
+    case GOOME_ROLE_RADIO: return mx_int((n->states & GOOME_A11Y_CHECKED) != 0);
+    case GOOME_ROLE_TAB: return mx_int((n->states & GOOME_A11Y_SELECTED) != 0);
+    case GOOME_ROLE_TREE: return mx_int((n->states & GOOME_A11Y_EXPANDED) != 0);
+    case GOOME_ROLE_TEXT: return mx_str(n->label);
+    case GOOME_ROLE_SLIDER:
+    case GOOME_ROLE_PROGRESS: return mx_num(n->num);
+    }
+    if (a->x[i].kind & GM_AXK_RANGE) return mx_num(n->num);
+    const char *t = gm_ax_str(a, i, &len);
+    if (!len) return n->role == GOOME_ROLE_INPUT ? mx_str("") : NULL;
+    char *c = malloc((size_t)len + 1);
+    if (!c) return NULL;
+    memcpy(c, t, (size_t)len);
+    c[len] = 0;
+    mx_id r = mx_str(c);
+    free(c);
+    return r;
+}
+
+static mx_id mx_n_min(mx_id self, mx_sel s)
+{
+    MX_NODE(self);
+    return i >= 0 && (a->x[i].kind & GM_AXK_RANGE) ? mx_num(a->n[i].min) : NULL;
+}
+
+static mx_id mx_n_max(mx_id self, mx_sel s)
+{
+    MX_NODE(self);
+    return i >= 0 && (a->x[i].kind & GM_AXK_RANGE) ? mx_num(a->n[i].max) : NULL;
+}
+
+static mx_rect mx_n_frame(mx_id self, mx_sel s)
+{
+    MX_NODE(self);
+    mx_rect z = {{0, 0}, {0, 0}};
+    return i >= 0 ? mx_frame(h, &a->n[i]) : z;
+}
+
+static mx_id mx_n_parent(mx_id self, mx_sel s)
+{
+    MX_NODE(self);
+    if (i < 0) return NULL;
+    return mx_node_el(h, a->n[i].parent);
+}
+
+static mx_id mx_n_kids(mx_id self, mx_sel s)
+{
+    MX_NODE(self);
+    return i >= 0 ? mx_kids(h, i) : mx_i(mx_lib.cls("NSArray"), "array");
+}
+
+static mx_id mx_n_window(mx_id self, mx_sel s)
+{
+    MX_NODE(self);
+    return h ? mx_i(h->view, "window") : NULL;
+}
+
+static mx_id mx_n_ident(mx_id self, mx_sel s)
+{
+    MX_NODE(self);
+    char t[16];
+    if (i < 0) return NULL;
+    snprintf(t, sizeof(t), "%u", (unsigned)a->n[i].id);
+    return mx_str(t);
+}
+
+static mx_bool mx_yes(mx_id self, mx_sel s) { return 1; }
+
+static mx_bool mx_n_state(mx_id self, mx_sel s, int bit)
+{
+    MX_NODE(self);
+    return i >= 0 && (a->n[i].states & bit) != 0;
+}
+
+static mx_bool mx_n_focused(mx_id self, mx_sel s) { return mx_n_state(self, s, GOOME_A11Y_FOCUSED); }
+static mx_bool mx_n_selected(mx_id self, mx_sel s) { return mx_n_state(self, s, GOOME_A11Y_SELECTED); }
+static mx_bool mx_n_expanded(mx_id self, mx_sel s) { return mx_n_state(self, s, GOOME_A11Y_EXPANDED); }
+static mx_bool mx_n_enabled(mx_id self, mx_sel s) { return !mx_n_state(self, s, GOOME_A11Y_DISABLED); }
+
+static mx_bool mx_n_press(mx_id self, mx_sel s)
+{
+    MX_NODE(self);
+    if (i < 0 || !(a->x[i].kind & (GM_AXK_PRESS | GM_AXK_EXPANDABLE))) return 0;
+    if (a->x[i].kind & GM_AXK_PRESS) gm_ax_act(h->g, a->n[i].id, "press", NULL);
+    else gm_ax_act(h->g, a->n[i].id, (a->n[i].states & GOOME_A11Y_EXPANDED) ? "collapse" : "expand", NULL);
+    return 1;
+}
+
+static mx_bool mx_n_step(mx_id self, int dir)
+{
+    MX_NODE(self);
+    if (i < 0 || !(a->x[i].kind & GM_AXK_RANGE) || !(a->x[i].kind & GM_AXK_EDITABLE)) return 0;
+    const goome_a11y_node *n = &a->n[i];
+    double span = n->max - n->min, st = span > 0 ? (span >= 20 ? span / 20 : span >= 2 ? 1 : span / 20) : 1;
+    char t[40];
+    snprintf(t, sizeof(t), "%.17g", n->num + dir * st);
+    gm_ax_act(h->g, n->id, "set", t);
+    return 1;
+}
+
+static mx_bool mx_n_inc(mx_id self, mx_sel s) { return mx_n_step(self, 1); }
+static mx_bool mx_n_dec(mx_id self, mx_sel s) { return mx_n_step(self, -1); }
+
+static void mx_n_set_value(mx_id self, mx_sel s, mx_id v)
+{
+    MX_NODE(self);
+    if (i < 0 || !(a->x[i].kind & GM_AXK_EDITABLE) || !v) return;
+    char t[40];
+    const char *txt;
+    if (((mx_bool(*)(mx_id, mx_sel, mx_id))mx_lib.msg)(v, mx_s("isKindOfClass:"), mx_lib.cls("NSNumber"))) {
+        snprintf(t, sizeof(t), "%.17g", mx_d(v, "doubleValue"));
+        txt = t;
+    } else
+        txt = mx_utf8(mx_i(v, "description"));
+    gm_ax_act(h->g, a->n[i].id, "set", txt ? txt : "");
+}
+
+static void mx_n_set_focus(mx_id self, mx_sel s, mx_bool on)
+{
+    MX_NODE(self);
+    if (i >= 0 && on && (a->x[i].kind & GM_AXK_FOCUSABLE)) gm_ax_act(h->g, a->n[i].id, "focus", NULL);
+}
+
+static long mx_n_chars(mx_id self, mx_sel s)
+{
+    MX_NODE(self);
+    int len;
+    if (i < 0) return 0;
+    const char *t = gm_ax_str(a, i, &len);
+    return gm_ax_chars(t, len);
+}
+
+static mx_range mx_n_sel_range(mx_id self, mx_sel s)
+{
+    MX_NODE(self);
+    mx_range r = {0, 0};
+    if (i >= 0) r.loc = (unsigned long)a->n[i].caret;
+    return r;
+}
+
+static mx_bool mx_n_allowed(mx_id self, mx_sel s, mx_sel q)
+{
+    MX_NODE(self);
+    if (i < 0) return 1;
+    int k = a->x[i].kind, r = a->n[i].role;
+    if (q == mx_s("accessibilityPerformPress")) return (k & (GM_AXK_PRESS | GM_AXK_EXPANDABLE)) != 0;
+    if (q == mx_s("accessibilityPerformIncrement") || q == mx_s("accessibilityPerformDecrement")) return (k & GM_AXK_RANGE) && (k & GM_AXK_EDITABLE);
+    if (q == mx_s("setAccessibilityValue:")) return (k & GM_AXK_EDITABLE) != 0;
+    if (q == mx_s("accessibilityMinValue") || q == mx_s("accessibilityMaxValue")) return (k & GM_AXK_RANGE) != 0;
+    if (q == mx_s("accessibilityNumberOfCharacters") || q == mx_s("accessibilitySelectedTextRange")) return r == GOOME_ROLE_INPUT;
+    if (q == mx_s("setAccessibilityFocused:")) return (k & GM_AXK_FOCUSABLE) != 0;
+    if (q == mx_s("isAccessibilityExpanded")) return (k & GM_AXK_EXPANDABLE) != 0;
+    return 1;
+}
+
+static mx_id mx_v_kids(mx_id self, mx_sel s) { return mx_kids(mx_host_of_view(self), -1); }
+static mx_id mx_v_role(mx_id self, mx_sel s) { return mx_str("AXGroup"); }
+
+static mx_id mx_v_label(mx_id self, mx_sel s)
+{
+    mx_host *h = mx_host_of_view(self);
+    return h && h->g ? mx_str(h->g->title) : NULL;
+}
+
+static mx_id mx_v_hit(mx_id self, mx_sel s, mx_pt p)
+{
+    mx_host *h = mx_host_of_view(self);
+    gm_ax *a = h && h->g ? h->g->ax : NULL;
+    if (!a) return self;
+    int best = -1;
+    for (int i = 0; i < a->count; i++) {
+        if (a->x[i].kind & GM_AXK_HIDDEN) continue;
+        mx_rect r = mx_frame(h, &a->n[i]);
+        if (p.x >= r.o.x && p.y >= r.o.y && p.x < r.o.x + r.s.w && p.y < r.o.y + r.s.h) best = i;
+    }
+    return best >= 0 ? mx_node_el(h, best) : self;
+}
+
+static mx_id mx_v_focus(mx_id self, mx_sel s)
+{
+    mx_host *h = mx_host_of_view(self);
+    gm_ax *a = h && h->g ? h->g->ax : NULL;
+    for (int i = 0; a && i < a->count; i++)
+        if (a->n[i].states & GOOME_A11Y_FOCUSED) return mx_node_el(h, i);
+    return self;
+}
+
+static void mx_m(mx_id c, const char *sel, void (*f)(void), const char *types) { mx_lib.add(c, mx_s(sel), f, types); }
+
+static int mx_load(void)
+{
+    if (mx_lib.tried) return mx_lib.ok;
+    mx_lib.tried = 1;
+    void *objc = dlopen("/usr/lib/libobjc.A.dylib", RTLD_NOW | RTLD_GLOBAL);
+    void *ak = dlopen("/System/Library/Frameworks/AppKit.framework/AppKit", RTLD_NOW | RTLD_GLOBAL);
+    if (!objc || !ak) return 0;
+    void *p;
+#define MX_SYM(lib, name, f) (p = dlsym(lib, name), memcpy(&mx_lib.f, &p, sizeof(p)), p != NULL)
+    int ok = MX_SYM(objc, "objc_getClass", cls) & MX_SYM(objc, "sel_registerName", sel) & MX_SYM(objc, "objc_msgSend", msg) & MX_SYM(objc, "objc_allocateClassPair", alloc_pair) &
+             MX_SYM(objc, "objc_registerClassPair", reg_pair) & MX_SYM(objc, "class_addMethod", add) & MX_SYM(ak, "NSAccessibilityPostNotification", post);
+#if !defined(__aarch64__) && !defined(__arm64__)
+    ok &= MX_SYM(objc, "objc_msgSend_stret", stret);
+#endif
+#undef MX_SYM
+    mx_lib.n_focus = dlsym(ak, "NSAccessibilityFocusedUIElementChangedNotification");
+    mx_lib.n_value = dlsym(ak, "NSAccessibilityValueChangedNotification");
+    mx_lib.n_title = dlsym(ak, "NSAccessibilityTitleChangedNotification");
+    mx_lib.n_gone = dlsym(ak, "NSAccessibilityUIElementDestroyedNotification");
+    mx_lib.n_made = dlsym(ak, "NSAccessibilityCreatedNotification");
+    if (!ok || !mx_lib.cls("NSAccessibilityElement")) return 0;
+    mx_id c = mx_lib.cls("GoomeAxNode");
+    if (!c) {
+        c = mx_lib.alloc_pair(mx_lib.cls("NSAccessibilityElement"), "GoomeAxNode", 0);
+        if (!c) return 0;
+        mx_m(c, "accessibilityRole", (void (*)(void))mx_n_role, "@@:");
+        mx_m(c, "accessibilitySubrole", (void (*)(void))mx_n_subrole, "@@:");
+        mx_m(c, "accessibilityLabel", (void (*)(void))mx_n_label, "@@:");
+        mx_m(c, "accessibilityTitle", (void (*)(void))mx_n_title, "@@:");
+        mx_m(c, "accessibilityValue", (void (*)(void))mx_n_value, "@@:");
+        mx_m(c, "accessibilityMinValue", (void (*)(void))mx_n_min, "@@:");
+        mx_m(c, "accessibilityMaxValue", (void (*)(void))mx_n_max, "@@:");
+        mx_m(c, "accessibilityFrame", (void (*)(void))mx_n_frame, MX_RECT "@:");
+        mx_m(c, "accessibilityParent", (void (*)(void))mx_n_parent, "@@:");
+        mx_m(c, "accessibilityChildren", (void (*)(void))mx_n_kids, "@@:");
+        mx_m(c, "accessibilityWindow", (void (*)(void))mx_n_window, "@@:");
+        mx_m(c, "accessibilityTopLevelUIElement", (void (*)(void))mx_n_window, "@@:");
+        mx_m(c, "accessibilityIdentifier", (void (*)(void))mx_n_ident, "@@:");
+        mx_m(c, "isAccessibilityElement", (void (*)(void))mx_yes, MX_B "@:");
+        mx_m(c, "isAccessibilityFocused", (void (*)(void))mx_n_focused, MX_B "@:");
+        mx_m(c, "isAccessibilitySelected", (void (*)(void))mx_n_selected, MX_B "@:");
+        mx_m(c, "isAccessibilityExpanded", (void (*)(void))mx_n_expanded, MX_B "@:");
+        mx_m(c, "isAccessibilityEnabled", (void (*)(void))mx_n_enabled, MX_B "@:");
+        mx_m(c, "accessibilityPerformPress", (void (*)(void))mx_n_press, MX_B "@:");
+        mx_m(c, "accessibilityPerformIncrement", (void (*)(void))mx_n_inc, MX_B "@:");
+        mx_m(c, "accessibilityPerformDecrement", (void (*)(void))mx_n_dec, MX_B "@:");
+        mx_m(c, "setAccessibilityValue:", (void (*)(void))mx_n_set_value, "v@:@");
+        mx_m(c, "setAccessibilityFocused:", (void (*)(void))mx_n_set_focus, "v@:" MX_B);
+        mx_m(c, "accessibilityNumberOfCharacters", (void (*)(void))mx_n_chars, "q@:");
+        mx_m(c, "accessibilitySelectedTextRange", (void (*)(void))mx_n_sel_range, "{_NSRange=QQ}@:");
+        mx_m(c, "isAccessibilitySelectorAllowed:", (void (*)(void))mx_n_allowed, MX_B "@::");
+        mx_lib.reg_pair(c);
+    }
+    mx_lib.node = c;
+    mx_lib.ok = 1;
+    return 1;
+}
+
+int gm_axp_open(goome *g)
+{
+    mx_id view = gm_mac_view(g);
+    if (!view || !mx_load() || mx_lib.nh >= 16) return -1;
+    if (!mx_lib.view_done) {
+        mx_id c = mx_lib.cls("GoomeAppView");
+        if (!c) return -1;
+        mx_m(c, "accessibilityChildren", (void (*)(void))mx_v_kids, "@@:");
+        mx_m(c, "isAccessibilityElement", (void (*)(void))mx_yes, MX_B "@:");
+        mx_m(c, "accessibilityRole", (void (*)(void))mx_v_role, "@@:");
+        mx_m(c, "accessibilityLabel", (void (*)(void))mx_v_label, "@@:");
+        mx_m(c, "accessibilityHitTest:", (void (*)(void))mx_v_hit, "@@:{CGPoint=dd}");
+        mx_m(c, "accessibilityFocusedUIElement", (void (*)(void))mx_v_focus, "@@:");
+        mx_lib.view_done = 1;
+    }
+    mx_host *h = calloc(1, sizeof(*h));
+    if (!h) return -1;
+    h->g = g, h->view = view;
+    mx_lib.hosts[mx_lib.nh++] = h;
+    g->ax->plat = h;
+    return 0;
+}
+
+static void mx_post(mx_id e, mx_id *name)
+{
+    if (e && name && *name) mx_lib.post(e, *name);
+}
+
+void gm_axp_event(goome *g, int ev, int i, int old)
+{
+    mx_host *h = g->ax ? g->ax->plat : NULL;
+    if (!h) return;
+    gm_ax *a = g->ax;
+    switch (ev) {
+    case GM_AXE_FOCUS: mx_post(mx_node_el(h, i), mx_lib.n_focus); break;
+    case GM_AXE_VALUE:
+    case GM_AXE_STATE: mx_post(mx_el(h, a->n[i].id, 0), mx_lib.n_value); break;
+    case GM_AXE_NAME: mx_post(mx_el(h, a->n[i].id, 0), mx_lib.n_title); break;
+    case GM_AXE_ADD: mx_post(mx_node_el(h, i), mx_lib.n_made); break;
+    case GM_AXE_REMOVE: mx_drop(h, a->pn[i].id); break;
+    }
+}
+
 int gm_axp_pump(goome *g) { return -1; }
-void gm_axp_close(goome *g) {}
+
+void gm_axp_close(goome *g)
+{
+    mx_host *h = g->ax->plat;
+    if (!h) return;
+    for (int k = 0; k < h->n; k++) mx_v(h->els[k], "release");
+    free(h->ids), free(h->els);
+    for (int i = 0; i < mx_lib.nh; i++)
+        if (mx_lib.hosts[i] == h) mx_lib.hosts[i] = mx_lib.hosts[--mx_lib.nh];
+    free(h);
+    g->ax->plat = NULL;
+}
+
+#undef MX_B
+#undef MX_RECT
+#undef MX_NODE
 #endif
 
 #endif
