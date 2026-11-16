@@ -511,7 +511,17 @@ static void *as_handle(goome *g, as_st *s, void *m)
     const char *iface = D.m_iface(m), *mem = D.m_member(m);
     if (!iface || !mem) return D.m_err(m, "org.freedesktop.DBus.Error.UnknownMethod", "no interface");
     if (!strcmp(iface, "org.freedesktop.DBus.Peer")) return D.m_ret(m);
-    int i = as_obj(a, D.m_path(m));
+    const char *path = D.m_path(m);
+    if (path && !strcmp(path, "/org/a11y/atspi/cache") && !strcmp(mem, "GetItems")) {
+        void *r = D.m_ret(m);
+        as_it it, c;
+        if (!r) return NULL;
+        D.it_app(r, &it);
+        D.it_open(&it, 'a', "((so)(so)(so)iiassusau)", &c);
+        D.it_close(&it, &c);
+        return r;
+    }
+    int i = as_obj(a, path);
     if (i == -3) return D.m_err(m, "org.freedesktop.DBus.Error.UnknownObject", "that one is gone");
     void *r = D.m_ret(m);
     if (!r) return NULL;
