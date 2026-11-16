@@ -2622,6 +2622,182 @@ static void bidi_caret(void)
     goome_font_free(f);
 }
 
+typedef struct {
+    goome *g;
+    goome_ui *u;
+    char in[64], ed[96], ctl[64];
+    int flags;
+    uint32_t hash;
+} im_t;
+
+static void im_frame(im_t *k, int focus)
+{
+    goome_event ev;
+    while (goome_poll(k->g, &ev, 0) > 0) {
+        if (ev.type == GOOME_CONTROL && !strncmp(ev.msg, "ime ", 4)) snprintf(k->ctl, sizeof(k->ctl), "%s", ev.msg);
+        goome_ui_feed(k->u, &ev);
+    }
+    goome_canvas *c = goome_ui_begin(k->u, 0);
+    if (!c) return;
+    if (focus == 1) goome_ui_set_focus(k->u);
+    goome_ui_input_ex(k->u, "in", k->in, sizeof(k->in), GOOME_INPUT_NO_SELECT_ON_FOCUS | k->flags, NULL);
+    if (focus == 2) goome_ui_set_focus(k->u);
+    goome_ui_text_edit(k->u, "ed", k->ed, sizeof(k->ed), 80, 0);
+    goome_ui_end(k->u);
+    k->hash = fnv(c->px, c->w, c->h, c->stride);
+}
+
+static int im_open(im_t *k, const char *script, const char *in, const char *ed, int focus)
+{
+    int err;
+    memset(k, 0, sizeof(*k));
+    k->g = goome_open(&(goome_opts){.backend = GOOME_TEST, .mode = GOOME_MODE_WINDOW, .width = 300, .height = 200, .test_script = script}, &err);
+    if (!k->g) return 0;
+    k->u = goome_ui_new(k->g);
+    if (!k->u) return goome_close(k->g), 0;
+    goome_theme *t = goome_ui_theme(k->u);
+    t->font = NULL, t->font_size = 14, t->anim_ms = 0;
+    goome_ui_cfg(k->u)->blink_ms = 0;
+    snprintf(k->in, sizeof(k->in), "%s", in);
+    snprintf(k->ed, sizeof(k->ed), "%s", ed);
+    im_frame(k, focus);
+    im_frame(k, 0);
+    return 1;
+}
+
+static void im_close(im_t *k)
+{
+    goome_ui_free(k->u);
+    goome_close(k->g);
+}
+
+static void im_push(im_t *k, int type, const char *s, int cur)
+{
+    goome_event e;
+    memset(&e, 0, sizeof(e));
+    e.type = type, e.id = cur;
+    snprintf(e.msg, sizeof(e.msg), "%s", s);
+    goome_push(k->g, &e);
+    im_frame(k, 0);
+}
+
+static void im_key(im_t *k, int key, int mods)
+{
+    goome_event e;
+    memset(&e, 0, sizeof(e));
+    e.type = GOOME_KEY, e.key = key, e.mods = mods;
+    if (key >= 32 && key < 127 && !(mods & GOOME_CTRL)) e.text[0] = (char)key;
+    goome_push(k->g, &e);
+    im_frame(k, 0);
+}
+
+static void ime(void)
+{
+    int err;
+    char longt[100], sc[200];
+    memset(longt, 'q', 80);
+    longt[80] = 0;
+    snprintf(sc, sizeof(sc), "1 text %s;2 preedit \xE3\x81\xAB\xE3\x81\xBB\xE3\x82\x93 3;3 preedit abc;4 preedit;end 10", longt);
+    goome *g = goome_open(&(goome_opts){.backend = GOOME_TEST, .mode = GOOME_MODE_WINDOW, .width = 100, .height = 100, .test_script = sc}, &err);
+    CHECK(g != NULL);
+    if (!g) return;
+    goome_event e;
+    memset(&e, 0, sizeof(e));
+    e.type = GOOME_TEXT;
+    snprintf(e.msg, sizeof(e.msg), "hi");
+    CHECK(goome_push(g, &e) == GOOME_OK);
+    CHECK(goome_poll(g, &e, 0) == 1 && e.type == GOOME_TEXT && !strcmp(e.msg, "hi") && !strcmp(goome_event_text(g), "hi"));
+    CHECK(goome_text_input(g, 1, &(goome_rect){10, 20, 1, 16}) == GOOME_OK && goome_text_input(g, 0, NULL) == GOOME_OK);
+    int got = 0, quit = 0;
+    for (int f = 0; f < 20 && !quit; f++) {
+        while (goome_poll(g, &e, 0) > 0) {
+            if (e.type == GOOME_QUIT) quit = 1;
+            if (e.type == GOOME_TEXT) {
+                got |= 1;
+                CHECK(strlen(e.msg) == 63 && !strcmp(goome_event_text(g), longt));
+            }
+            if (e.type == GOOME_PREEDIT && !strcmp(goome_event_text(g), "\xE3\x81\xAB\xE3\x81\xBB\xE3\x82\x93")) {
+                got |= 2;
+                CHECK(e.id == 3 && goome_preedit_cursor(g) == 3);
+            }
+            if (e.type == GOOME_PREEDIT && !strcmp(e.msg, "abc")) {
+                got |= 4;
+                CHECK(goome_preedit_cursor(g) == 3);
+            }
+            if (e.type == GOOME_PREEDIT && !e.msg[0]) {
+                got |= 8;
+                CHECK(goome_preedit_cursor(g) == 0 && !goome_event_text(g)[0]);
+            }
+        }
+        goome_canvas *c = goome_begin(g, 0);
+        if (c) goome_end(g, c, NULL, 0);
+    }
+    CHECK(got == 15);
+    goome_close(g);
+
+    im_t k;
+    uint32_t h[4];
+    if (!im_open(&k, "end 100000", "ab", "", 1)) return;
+    h[0] = k.hash;
+    im_push(&k, GOOME_PREEDIT, "xyz", 1);
+    h[1] = k.hash;
+    im_push(&k, GOOME_PREEDIT, "xyz", 3);
+    h[2] = k.hash;
+    CHECK(h[0] != h[1] && h[1] != h[2] && !strcmp(k.in, "ab"));
+    im_push(&k, GOOME_PREEDIT, "", 0);
+    CHECK(k.hash == h[0]);
+    im_push(&k, GOOME_TEXT, "\xE6\x97\xA5\xE6\x9C\xAC", 0);
+    CHECK(!strcmp(k.in, "ab\xE6\x97\xA5\xE6\x9C\xAC"));
+    im_key(&k, 'c', 0);
+    CHECK(!strcmp(k.in, "ab\xE6\x97\xA5\xE6\x9C\xAC" "c"));
+    im_key(&k, 'z', GOOME_CTRL);
+    CHECK(!strcmp(k.in, "ab\xE6\x97\xA5\xE6\x9C\xAC"));
+    im_key(&k, 'z', GOOME_CTRL);
+    CHECK(!strcmp(k.in, "ab\xE6\x97\xA5\xE6\x9C\xAC" "c"));
+    im_key(&k, 'a', GOOME_CTRL);
+    im_push(&k, GOOME_TEXT, "\xC3\xA9", 0);
+    CHECK(!strcmp(k.in, "\xC3\xA9"));
+    im_key(&k, 'z', GOOME_CTRL);
+    CHECK(!strcmp(k.in, "ab\xE6\x97\xA5\xE6\x9C\xAC" "c"));
+    im_close(&k);
+
+    if (!im_open(&k, "end 100000", "", "line", 2)) return;
+    h[3] = k.hash;
+    im_push(&k, GOOME_PREEDIT, "kana", 2);
+    CHECK(k.hash != h[3]);
+    uint32_t edh = k.hash;
+    im_push(&k, GOOME_PREEDIT, "", 0);
+    im_push(&k, GOOME_TEXT, "\xE3\x81\x8B\xE3\x81\xAA\n", 0);
+    CHECK(!strcmp(k.ed, "\xE3\x81\x8B\xE3\x81\xAA\nline") && !k.in[0]);
+    im_key(&k, 'z', GOOME_CTRL);
+    CHECK(!strcmp(k.ed, "line"));
+    im_close(&k);
+
+    if (!im_open(&k, "end 100000", "", "", 1)) return;
+    k.flags = GOOME_INPUT_NUMBER;
+    im_push(&k, GOOME_TEXT, "1a2.5", 0);
+    CHECK(!strcmp(k.in, "12.5"));
+    im_close(&k);
+
+    memset(longt, 'w', 90);
+    longt[90] = 0;
+    snprintf(sc, sizeof(sc), "4 text %s;6 ime;end 100000", longt);
+    if (!im_open(&k, sc, "", "", 1)) return;
+    for (int f = 0; f < 8; f++) im_frame(&k, 0);
+    CHECK(!strcmp(k.in, longt) || (strlen(k.in) == sizeof(k.in) - 1 && !strncmp(k.in, longt, sizeof(k.in) - 1)));
+    int on = 0, x = 0, y = 0, w = 0, hh = 0;
+    CHECK(sscanf(k.ctl, "ime %d %d,%d %dx%d", &on, &x, &y, &w, &hh) == 5 && on == 1 && x > 0 && y > 0 && hh >= 14);
+    im_close(&k);
+
+    if (!im_open(&k, "3 ime;end 100000", "", "", 0)) return;
+    for (int f = 0; f < 5; f++) im_frame(&k, 0);
+    CHECK(!strncmp(k.ctl, "ime 0 ", 6));
+    im_close(&k);
+
+    printf("ime hashes %08x %08x %08x %08x %08x\n", h[0], h[1], h[2], h[3], edh);
+    CHECK(h[1] == 0x2e20540fu && h[2] == 0xceafcbadu && edh == 0xc9c1add5u);
+}
+
 int main(void)
 {
     gm_dump_dir = getenv("GOOME_UNIT_DUMP");
@@ -2646,6 +2822,7 @@ int main(void)
     anims();
     emoji_rtl();
     bidi_caret();
+    ime();
     printf(fails ? "%d failed\n" : "all good\n", fails);
     return fails != 0;
 }

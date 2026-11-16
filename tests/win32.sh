@@ -22,7 +22,7 @@ cc=${CC:-x86_64-w64-mingw32-gcc}
 for t in hide hit; do
   "$cc" -std=c99 -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -Werror -O2 -Iinclude -o "$B/win32_$t.exe" tests/win32_$t.c "$B/libgoome.a" || bad build-$t
 done
-for t in grab_ui win_game; do
+for t in grab_ui win_game win_ime; do
   "$cc" -std=c99 -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -Werror -O2 -Iinclude -o "$B/$t.exe" tests/$t.c "$B/libgoome.a" || bad build-$t
 done
 "$cc" -std=c99 -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -Werror -O2 -Iinclude -o "$B/winmode.exe" tests/winmode.c "$B/libgoome.a" || bad build-winmode
@@ -254,6 +254,13 @@ wine "$B/winmode.exe" plain 2 > "$out/wm-144.txt" 2>&1
 grep -q "^window 640x400 scale 1.50 px 960x600" "$out/wm-144.txt" && grep -q "^ok frame" "$out/wm-144.txt" && ok "scale 1.5 window is 960x600 real px" || bad "scale 1.5 window: $(head -3 "$out/wm-144.txt")"
 "$ws" -k
 setdpi 96
+
+# 8 ime: imm32 composition through wines own ime, set a string then finish it
+timeout 60 wine "$B/win_ime.exe" > "$out/ime.txt" 2>&1
+grep -q "^ime rc 0" "$out/ime.txt" && grep -q "^context yes" "$out/ime.txt" && ok "ime turns on" || bad "ime turns on: $(head -3 "$out/ime.txt")"
+grep -q "^preedit 'にほん' 9$" "$out/ime.txt" && ok "ime preedit with the caret at the end" || bad "ime preedit: $(grep preedit "$out/ime.txt")"
+grep -q "^text にほん$" "$out/ime.txt" && grep -q "^preedit '' 0$" "$out/ime.txt" && ok "ime commit clears the preedit" || bad "ime commit: $(grep -v preedit "$out/ime.txt")"
+grep -q "^bye" "$out/ime.txt" && ok "ime off and close" || bad "ime off and close"
 
 echo "info hotplug: Xvfb has one fixed screen, wine cant hotplug here, see win32.ps1 / by hand"
 [ $fails = 0 ] && echo "win32 wine: all passed" || echo "win32 wine: $fails failed"

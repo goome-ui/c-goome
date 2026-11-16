@@ -5,6 +5,7 @@
 #   X11_ONLY=win          just the window mode part
 #   X11_ONLY=grab         just the input grab part
 #   X11_ONLY=late         just the hit rects that come after the overlay is up
+#   X11_ONLY=ime          just dead keys, compose and ibus (if its installed)
 # heavy (Xvfb + picom), takes a few minutes
 set -u
 repo=$(cd "$(dirname "$0")/.." && pwd)
@@ -25,7 +26,7 @@ if [ "${1:-}" = asan ]; then
   export LSAN_OPTIONS=suppressions=$S/lsan.supp
 fi
 mkdir -p bin
-for f in "$repo"/examples/hello.c "$repo"/examples/grab.c "$repo"/examples/app.c "$repo"/tests/x11_probe.c "$repo"/tests/win_two.c "$repo"/tests/grab_ui.c "$repo"/tests/late_hits.c; do
+for f in "$repo"/examples/hello.c "$repo"/examples/grab.c "$repo"/examples/app.c "$repo"/tests/x11_probe.c "$repo"/tests/win_two.c "$repo"/tests/grab_ui.c "$repo"/tests/late_hits.c "$repo"/tests/ime_ui.c; do
   cc "${cflags[@]}" -o "bin/$(basename "${f%.c}")" "$f" "$repo"/src/*.c || exit 1
 done
 B=$S/bin
@@ -534,6 +535,51 @@ run_grab() {
 
 maps() { grep -A2 '^MapNotify' "$1" | grep -c 'override YES'; }
 
+run_ime() {
+  tag=ime-$1
+  echo "== $tag"
+  start_x 1280x720 0
+  local L=$tag.log ip= im=@im=none
+  if [ "$1" = ibus ]; then
+    mkdir -p "$S/ibus-cfg" "$S/ibus-cache"
+    dbus-daemon --session --fork --address="unix:path=$S/ibus-dbus" --print-pid >"$S/ibus-dbus.pid"
+    local ienv=(DBUS_SESSION_BUS_ADDRESS=unix:path=$S/ibus-dbus IBUS_ADDRESS=unix:path=$S/ibus-sock XDG_CONFIG_HOME=$S/ibus-cfg XDG_CACHE_HOME=$S/ibus-cache)
+    env "${ienv[@]}" ibus-daemon -x -p disable -E disable -c disable -a "unix:path=$S/ibus-sock" >"$S/ibus.log" 2>&1 &
+    ip=$!
+    sleep 2
+    env "${ienv[@]}" ibus engine xkb:us::eng >>"$S/ibus.log" 2>&1
+    sleep 0.5
+    im=@im=ibus
+  fi
+  xmodmap -e "keycode 200 = dead_acute" -e "keycode 201 = Multi_key"
+  env -u LC_ALL LANG=C.UTF-8 XMODIFIERS=$im "$B/ime_ui" >"$L" 2>"$tag.err" &
+  local ap=$!
+  waitfor "$L" '^ime rc' 40
+  check "$tag: the input method opens" grep -q '^ime rc 0 ' "$L"
+  xdotool search --name '^goome ime$' windowfocus 2>/dev/null
+  sleep 0.3
+  P2 key.py dead_acute e
+  check "$tag: dead key then e commits e acute" waitfor "$L" '^text é$'
+  P2 key.py a
+  check "$tag: a plain key stays a key" waitfor "$L" '^key a$'
+  P2 key.py Multi_key o c
+  check "$tag: compose o c is the copyright sign" waitfor "$L" '^text ©$'
+  check "$tag: the input has all of it" waitfor "$L" '^buf éa©$'
+  check "$tag: no text event for the plain key" bash -c "! grep -q '^text a' $L"
+  if [ "$1" = ibus ]; then
+    check "$tag: ibus shows the dead key as preedit" grep -q "^preedit '´' " "$L"
+    check "$tag: preedit gets cleared after the commit" grep -q "^preedit '' 0$" "$L"
+  fi
+  kill $ap 2>/dev/null
+  wait $ap 2>/dev/null
+  if [ "$1" = ibus ]; then
+    kill $ip 2>/dev/null
+    wait $ip 2>/dev/null
+    kill "$(cat "$S/ibus-dbus.pid")" 2>/dev/null
+  fi
+  stop_x
+}
+
 run_late() {
   tag=late-$1
   local wm=$2
@@ -600,7 +646,11 @@ if [ -z "${X11_ONLY:-}" ] || [ "$X11_ONLY" = late ]; then
   run_late nowm none
   if command -v xfwm4 >/dev/null; then run_late xfwm4 xfwm4; else echo "skip late hit rects with a window manager, no xfwm4"; fi
 fi
-if [ "${X11_ONLY:-}" = grab ] || [ "${X11_ONLY:-}" = late ]; then
+if [ -z "${X11_ONLY:-}" ] || [ "$X11_ONLY" = ime ]; then
+  run_ime none
+  if command -v ibus-daemon >/dev/null && command -v dbus-daemon >/dev/null; then run_ime ibus; else echo "skip ime with ibus, its not installed"; fi
+fi
+if [ "${X11_ONLY:-}" = grab ] || [ "${X11_ONLY:-}" = late ] || [ "${X11_ONLY:-}" = ime ]; then
   :
 elif command -v xsel >/dev/null; then
   run_win nowm none 0
