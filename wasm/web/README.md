@@ -29,7 +29,7 @@ void goome_web_done(void);
 
 The window has no title bar of its own: goome leaves out the bar `goome_ui_app` draws (`GOOME_WINDOW_NO_TITLEBAR`, set for you in the web build) and the content fills the whole canvas. The title you pass to `goome_open` becomes the page title. If you draw your own bar with the draw api, you have to skip it yourself.
 
-`examples/web_counter.c` (widgets) and `examples/web_draw.c` (draw api, mouse, wheel, keys, clipboard, cursor) are both written like this and still build on the desktop.
+`examples/web_counter.c` (widgets), `examples/web_draw.c` (draw api, mouse, wheel, keys, clipboard, cursor), `examples/web_game.c` (a breakout game) and `examples/web_app.c` (a task list with tabs, a table and themes) are all written like this and still build on the desktop.
 
 ## What doesnt work
 
