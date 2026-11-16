@@ -424,10 +424,14 @@ static void w32_up(w32_mon *m, int button, LPARAM lp)
 
 static HCURSOR w32_cursor(int shape);
 
+static int w32i_msg(goome *g, HWND h, UINT msg, WPARAM wp, LPARAM lp, LRESULT *out);
+
 static LRESULT CALLBACK w32_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 {
     w32_mon *m = w32.g ? w32_mon_of(w) : NULL;
     if (!m) return DefWindowProcW(w, msg, wp, lp);
+    LRESULT ir;
+    if (w32i_msg(w32.g, w, msg, wp, lp, &ir)) return ir;
     switch (msg) {
     case WM_LBUTTONDOWN: w32_down(w, m, 1, lp); return 0;
     case WM_MBUTTONDOWN: w32_down(w, m, 2, lp); return 0;
@@ -909,6 +913,176 @@ static struct {
     void(WINAPI *drag_finish)(HANDLE);
 } w32x;
 
+typedef struct {
+    DWORD style;
+    POINT pos;
+    RECT area;
+} w32i_comp;
+
+typedef struct {
+    DWORD index, style;
+    POINT pos;
+    RECT area;
+} w32i_cand;
+
+static struct {
+    int tried, composing;
+    HMODULE dll;
+    void *(WINAPI *get)(HWND);
+    BOOL(WINAPI *release)(HWND, void *);
+    LONG(WINAPI *str)(void *, DWORD, void *, DWORD);
+    BOOL(WINAPI *set_comp)(void *, w32i_comp *);
+    BOOL(WINAPI *set_cand)(void *, w32i_cand *);
+    BOOL(WINAPI *assoc)(HWND, void *, DWORD);
+    BOOL(WINAPI *notify)(void *, DWORD, DWORD, DWORD);
+    goome *g;
+    HWND win;
+    int on;
+    RECT r;
+} w32i;
+
+static int w32i_load(void)
+{
+    if (w32i.tried) return w32i.dll != NULL;
+    w32i.tried = 1;
+    w32i.dll = LoadLibraryA("imm32.dll");
+    if (!w32i.dll) return 0;
+    W32_LOAD(w32i.get, w32i.dll, "ImmGetContext");
+    W32_LOAD(w32i.release, w32i.dll, "ImmReleaseContext");
+    W32_LOAD(w32i.str, w32i.dll, "ImmGetCompositionStringW");
+    W32_LOAD(w32i.set_comp, w32i.dll, "ImmSetCompositionWindow");
+    W32_LOAD(w32i.set_cand, w32i.dll, "ImmSetCandidateWindow");
+    W32_LOAD(w32i.assoc, w32i.dll, "ImmAssociateContextEx");
+    W32_LOAD(w32i.notify, w32i.dll, "ImmNotifyIME");
+    if (!w32i.get || !w32i.release || !w32i.str || !w32i.set_comp || !w32i.assoc) {
+        FreeLibrary(w32i.dll);
+        w32i.dll = NULL;
+    }
+    return w32i.dll != NULL;
+}
+
+static void w32i_place(HWND h)
+{
+    void *c = w32i.get(h);
+    if (!c) return;
+    w32i_comp cf;
+    memset(&cf, 0, sizeof(cf));
+    cf.style = 0x20, cf.pos.x = w32i.r.left, cf.pos.y = w32i.r.top, cf.area = w32i.r;
+    w32i.set_comp(c, &cf);
+    if (w32i.set_cand) {
+        w32i_cand cd;
+        memset(&cd, 0, sizeof(cd));
+        cd.style = 0x80, cd.pos.x = w32i.r.left, cd.pos.y = w32i.r.bottom, cd.area = w32i.r;
+        w32i.set_cand(c, &cd);
+    }
+    w32i.release(h, c);
+}
+
+static char *w32i_take(void *c, DWORD what, int upto, int *n, int *cut)
+{
+    LONG bytes = w32i.str(c, what, NULL, 0);
+    *n = 0, *cut = 0;
+    if (bytes < 0) return NULL;
+    int wn = (int)(bytes / 2);
+    WCHAR *ws = malloc(sizeof(WCHAR) * (size_t)(wn + 1));
+    if (!ws) return NULL;
+    if (wn) w32i.str(c, what, ws, (DWORD)bytes);
+    int un = wn ? WideCharToMultiByte(CP_UTF8, 0, ws, wn, NULL, 0, NULL, NULL) : 0;
+    char *u = malloc((size_t)un + 1);
+    if (u) {
+        if (un) WideCharToMultiByte(CP_UTF8, 0, ws, wn, u, un, NULL, NULL);
+        u[un] = 0, *n = un;
+        if (upto > wn) upto = wn;
+        *cut = upto > 0 ? WideCharToMultiByte(CP_UTF8, 0, ws, upto, NULL, 0, NULL, NULL) : 0;
+    }
+    free(ws);
+    return u;
+}
+
+static void w32i_comp_msg(goome *g, HWND h, LPARAM lp)
+{
+    void *c = w32i.get(h);
+    if (!c) return;
+    int n, cut;
+    if (lp & 0x800) {
+        char *t = w32i_take(c, 0x800, 0, &n, &cut);
+        if (t && n) gm_ime_push(g, GOOME_TEXT, t, n, 0);
+        free(t);
+    }
+    if (lp & 0x8) {
+        LONG cur = (lp & 0x80) ? w32i.str(c, 0x80, NULL, 0) : -1;
+        char *t = w32i_take(c, 0x8, cur < 0 ? 1 << 30 : (int)cur, &n, &cut);
+        if (t) gm_ime_push(g, GOOME_PREEDIT, t, n, cut), w32i.composing = n > 0;
+        free(t);
+    } else if ((lp & 0x800) && w32i.composing)
+        gm_ime_push(g, GOOME_PREEDIT, "", 0, 0), w32i.composing = 0;
+    w32i.release(h, c);
+}
+
+static int w32i_msg(goome *g, HWND h, UINT msg, WPARAM wp, LPARAM lp, LRESULT *out)
+{
+    if (!g || g != w32i.g || h != w32i.win || !w32i.dll) return 0;
+    switch (msg) {
+    case WM_IME_SETCONTEXT:
+        *out = DefWindowProcW(h, msg, wp, w32i.on ? (LPARAM)((unsigned long long)lp & ~0x80000000ull) : lp);
+        return 1;
+    case WM_IME_STARTCOMPOSITION:
+        if (!w32i.on) return 0;
+        w32i_place(h);
+        *out = 0;
+        return 1;
+    case WM_IME_COMPOSITION:
+        if (!w32i.on) return 0;
+        w32i_comp_msg(g, h, lp);
+        *out = 0;
+        return 1;
+    case WM_IME_ENDCOMPOSITION:
+        if (w32i.composing) gm_ime_push(g, GOOME_PREEDIT, "", 0, 0), w32i.composing = 0;
+        if (!w32i.on) return 0;
+        *out = 0;
+        return 1;
+    }
+    return 0;
+}
+
+int gm_ime_win32(goome *g, int on, const goome_rect *caret)
+{
+    if (!w32i_load()) return on ? gm_fail(g, GOOME_ENOTSUP, "cant load imm32.dll") : GOOME_OK;
+    HWND h = NULL;
+    RECT r;
+    if (g->ov_priv) {
+        w32_win *w = g->ov_priv;
+        h = w->win;
+        r.left = (LONG)(caret->x * w->s + 0.5), r.top = (LONG)(caret->y * w->s + 0.5);
+        r.right = (LONG)((caret->x + caret->w) * w->s + 0.5), r.bottom = (LONG)((caret->y + caret->h) * w->s + 0.5);
+    } else {
+        for (int i = 0; i < w32.n && !h; i++) {
+            w32_mon *m = &w32.m[i];
+            double lx = m->r.left, ly = m->r.top, lw = (m->r.right - m->r.left) / m->s, lh = (m->r.bottom - m->r.top) / m->s;
+            if (m->win && caret->x >= lx && caret->y >= ly && caret->x < lx + lw && caret->y < ly + lh) {
+                h = m->win;
+                r.left = (LONG)((caret->x - lx) * m->s + 0.5), r.top = (LONG)((caret->y - ly) * m->s + 0.5);
+                r.right = (LONG)((caret->x + caret->w - lx) * m->s + 0.5), r.bottom = (LONG)((caret->y + caret->h - ly) * m->s + 0.5);
+            }
+        }
+    }
+    if (!h) return on ? gm_fail(g, GOOME_EARG, "no goome window under the caret") : GOOME_OK;
+    if (w32i.on && w32i.win && (w32i.win != h || !on)) {
+        void *c = w32i.get(w32i.win);
+        if (c && w32i.notify) w32i.notify(c, 0x15, 4, 0);
+        if (c) w32i.release(w32i.win, c);
+        if (w32i.composing) gm_ime_push(g, GOOME_PREEDIT, "", 0, 0), w32i.composing = 0;
+    }
+    if (!on) {
+        w32i.on = 0;
+        return GOOME_OK;
+    }
+    if (!w32i.on || w32i.win != h) w32i.assoc(h, NULL, 0x10);
+    w32i.g = g, w32i.win = h, w32i.on = 1, w32i.r = r;
+    w32i_place(h);
+    return GOOME_OK;
+}
+
 static HCURSOR w32_cursor(int shape)
 {
     switch (shape) {
@@ -1151,6 +1325,8 @@ static LRESULT CALLBACK w32w_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     w32_win *w = (w32_win *)GetWindowLongPtrW(h, GWLP_USERDATA);
     if (!w) return DefWindowProcW(h, msg, wp, lp);
     goome *g = w->g;
+    LRESULT ir;
+    if (w32i_msg(g, h, msg, wp, lp, &ir)) return ir;
     switch (msg) {
     case WM_NCCALCSIZE:
         if (wp && w->popup) return 0;
