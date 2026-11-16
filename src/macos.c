@@ -1159,6 +1159,10 @@ static void mac_wscroll(mac_id self, mac_sel cmd, mac_id e)
     gm_push(w->g, &ev);
 }
 
+static int mac_ime_key(mac_win *w, mac_id view, mac_id e);
+static void mac_ime_methods(mac_id c);
+static void mac_ime_gone(mac_win *w);
+
 static void mac_wkeydown(mac_id self, mac_sel cmd, mac_id e)
 {
     mac_win *w = mac_win_of(self);
@@ -1168,7 +1172,7 @@ static void mac_wkeydown(mac_id self, mac_sel cmd, mac_id e)
         mac_wpush(w, GOOME_CLOSE, 0);
         return;
     }
-    mac_key(w->g, e);
+    if (!mac_ime_key(w, self, e)) mac_key(w->g, e);
 }
 
 static void mac_wdraw(mac_id self, mac_sel cmd, mac_rect dirty)
@@ -1282,6 +1286,7 @@ static int mac_wclasses(void)
         mac_method(c, "keyDown:", (void (*)(void))mac_wkeydown, "v@:@");
         mac_method(c, "draggingEntered:", (void (*)(void))mac_wdrag_in, "Q@:@");
         mac_method(c, "performDragOperation:", (void (*)(void))mac_wdrop, MAC_B "@:@");
+        mac_ime_methods(c);
         mac.reg_pair(c);
         mac_appview = c;
     }
@@ -1627,10 +1632,209 @@ static int mac_wcursor(goome *g, int shape)
     return GOOME_OK;
 }
 
+typedef struct {
+    unsigned long loc, len;
+} mac_range;
+#define MAC_RANGE_ENC "{_NSRange=QQ}"
+#define MAC_NOT_FOUND 0x7fffffffffffffffUL
+
+static struct {
+    mac_win *w;
+    int on, in_key, was, cmd, marked;
+    char *stash, *pre;
+    goome_rect caret;
+} macime;
+
+static void mac_ime_gone(mac_win *w)
+{
+    if (macime.w != w) return;
+    free(macime.stash), free(macime.pre);
+    memset(&macime, 0, sizeof(macime));
+}
+
+static mac_id mac_ime_plain(mac_id s)
+{
+    return s && mac_responds(s, "string") && !mac_responds(s, "characterAtIndex:") ? mac_i(s, "string") : s;
+}
+
+static char *mac_ime_dup(const char *t)
+{
+    size_t n = t ? strlen(t) : 0;
+    char *d = malloc(n + 1);
+    if (d) memcpy(d, t ? t : "", n + 1);
+    return d;
+}
+
+static void mac_ime_set_pre(mac_win *w, const char *t, int cur)
+{
+    free(macime.pre);
+    macime.pre = mac_ime_dup(t);
+    macime.marked = t && *t;
+    gm_ime_push(w->g, GOOME_PREEDIT, t ? t : "", -1, cur);
+}
+
+static void mac_ime_insert2(mac_id self, mac_sel cmd, mac_id str, mac_range rep)
+{
+    mac_win *w = mac_win_of(self);
+    if (!w || macime.w != w) return;
+    const char *t = mac_utf8(mac_ime_plain(str));
+    if (macime.in_key && !macime.was && !macime.marked) {
+        free(macime.stash);
+        macime.stash = mac_ime_dup(t);
+    } else if (t && *t)
+        gm_ime_push(w->g, GOOME_TEXT, t, -1, 0);
+    if (macime.marked) mac_ime_set_pre(w, "", 0);
+}
+
+static void mac_ime_insert(mac_id self, mac_sel cmd, mac_id str)
+{
+    mac_range r = {MAC_NOT_FOUND, 0};
+    mac_ime_insert2(self, cmd, str, r);
+}
+
+static void mac_ime_mark(mac_id self, mac_sel cmd, mac_id str, mac_range sel, mac_range rep)
+{
+    mac_win *w = mac_win_of(self);
+    if (!w || macime.w != w) return;
+    mac_id s = mac_ime_plain(str);
+    const char *t = mac_utf8(s);
+    unsigned long n = mac_u(s, "length"), at = sel.loc > n ? n : sel.loc;
+    mac_id head = s ? ((mac_id(*)(mac_id, mac_sel, unsigned long))mac.msg)(s, mac_s("substringToIndex:"), at) : NULL;
+    const char *h = mac_utf8(head);
+    mac_ime_set_pre(w, t, h ? (int)strlen(h) : 0);
+}
+
+static void mac_ime_unmark(mac_id self, mac_sel cmd)
+{
+    mac_win *w = mac_win_of(self);
+    if (!w || macime.w != w || !macime.marked) return;
+    char *t = mac_ime_dup(macime.pre);
+    if (t && *t) gm_ime_push(w->g, GOOME_TEXT, t, -1, 0);
+    free(t);
+    mac_ime_set_pre(w, "", 0);
+}
+
+static mac_bool mac_ime_has(mac_id self, mac_sel cmd) { return (mac_bool)(macime.w && macime.w == mac_win_of(self) && macime.marked); }
+
+static mac_range mac_ime_marked_range(mac_id self, mac_sel cmd)
+{
+    mac_range r = {MAC_NOT_FOUND, 0};
+    if (macime.marked && macime.pre && macime.w == mac_win_of(self)) {
+        mac_id s = mac_str(macime.pre);
+        r.loc = 0, r.len = mac_u(s, "length");
+    }
+    return r;
+}
+
+static mac_range mac_ime_sel_range(mac_id self, mac_sel cmd)
+{
+    mac_range r = {0, 0};
+    return r;
+}
+
+static mac_id mac_ime_attrs(mac_id self, mac_sel cmd) { return mac_i(mac_c("NSArray"), "array"); }
+static mac_id mac_ime_sub(mac_id self, mac_sel cmd, mac_range r, mac_range *actual) { return NULL; }
+static unsigned long mac_ime_index(mac_id self, mac_sel cmd, mac_pt p) { return MAC_NOT_FOUND; }
+static void mac_ime_cmd(mac_id self, mac_sel cmd, mac_sel what) { macime.cmd = 1; }
+
+static mac_rect mac_ime_rect_call(mac_id o, const char *sel, mac_rect a, mac_id b, int two)
+{
+#if defined(__aarch64__) || defined(__arm64__)
+    if (two) return ((mac_rect(*)(mac_id, mac_sel, mac_rect, mac_id))mac.msg)(o, mac_s(sel), a, b);
+    return ((mac_rect(*)(mac_id, mac_sel, mac_rect))mac.msg)(o, mac_s(sel), a);
+#else
+    if (two) return ((mac_rect(*)(mac_id, mac_sel, mac_rect, mac_id))mac.msg_stret)(o, mac_s(sel), a, b);
+    return ((mac_rect(*)(mac_id, mac_sel, mac_rect))mac.msg_stret)(o, mac_s(sel), a);
+#endif
+}
+
+static mac_rect mac_ime_first_rect(mac_id self, mac_sel cmd, mac_range r, mac_range *actual)
+{
+    mac_win *w = mac_win_of(self);
+    mac_rect out = {{0, 0}, {0, 0}};
+    if (actual) *actual = r;
+    if (!w || macime.w != w) return out;
+    goome_rect c = macime.caret;
+    mac_rect v = {{c.x, w->vh - (c.y + c.h)}, {c.w, c.h}};
+    mac_rect in_win = mac_ime_rect_call(self, "convertRect:toView:", v, NULL, 1);
+    return mac_ime_rect_call(w->win, "convertRectToScreen:", in_win, NULL, 0);
+}
+
+static void mac_ime_methods(mac_id c)
+{
+    mac_method(c, "insertText:replacementRange:", (void (*)(void))mac_ime_insert2, "v@:@" MAC_RANGE_ENC);
+    mac_method(c, "insertText:", (void (*)(void))mac_ime_insert, "v@:@");
+    mac_method(c, "setMarkedText:selectedRange:replacementRange:", (void (*)(void))mac_ime_mark, "v@:@" MAC_RANGE_ENC MAC_RANGE_ENC);
+    mac_method(c, "unmarkText", (void (*)(void))mac_ime_unmark, "v@:");
+    mac_method(c, "hasMarkedText", (void (*)(void))mac_ime_has, MAC_B "@:");
+    mac_method(c, "markedRange", (void (*)(void))mac_ime_marked_range, MAC_RANGE_ENC "@:");
+    mac_method(c, "selectedRange", (void (*)(void))mac_ime_sel_range, MAC_RANGE_ENC "@:");
+    mac_method(c, "validAttributesForMarkedText", (void (*)(void))mac_ime_attrs, "@@:");
+    mac_method(c, "attributedSubstringForProposedRange:actualRange:", (void (*)(void))mac_ime_sub, "@@:" MAC_RANGE_ENC "^" MAC_RANGE_ENC);
+    mac_method(c, "characterIndexForPoint:", (void (*)(void))mac_ime_index, "Q@:{CGPoint=dd}");
+    mac_method(c, "firstRectForCharacterRange:actualRange:", (void (*)(void))mac_ime_first_rect, MAC_RECT_ENC "@:" MAC_RANGE_ENC "^" MAC_RANGE_ENC);
+    mac_method(c, "doCommandBySelector:", (void (*)(void))mac_ime_cmd, "v@::");
+    mac_id (*get_proto)(const char *) = NULL;
+    mac_bool (*add_proto)(mac_id, mac_id) = NULL;
+    void *p = dlsym(mac.objc, "objc_getProtocol");
+    memcpy(&get_proto, &p, sizeof(p));
+    p = dlsym(mac.objc, "class_addProtocol");
+    memcpy(&add_proto, &p, sizeof(p));
+    mac_id proto = get_proto ? get_proto("NSTextInputClient") : NULL;
+    if (proto && add_proto) add_proto(c, proto);
+}
+
+static int mac_ime_key(mac_win *w, mac_id view, mac_id e)
+{
+    if (macime.w != w || !macime.on) return 0;
+    mac_id ctx = mac_i(view, "inputContext");
+    if (!ctx) return 0;
+    macime.was = macime.marked, macime.cmd = 0, macime.in_key = 1;
+    free(macime.stash);
+    macime.stash = NULL;
+    int used = ((mac_bool(*)(mac_id, mac_sel, mac_id))mac.msg)(ctx, mac_s("handleEvent:"), e) != 0;
+    macime.in_key = 0;
+    char *st = macime.stash;
+    macime.stash = NULL;
+    int plain = !macime.was && !macime.marked, eaten = 1;
+    if (!used || macime.cmd) eaten = !plain;
+    else if (st) {
+        const char *chars = mac_utf8(mac_i(e, "characters"));
+        if (plain && chars && !strcmp(chars, st)) eaten = 0;
+        else if (*st) gm_ime_push(w->g, GOOME_TEXT, st, -1, 0);
+    }
+    free(st);
+    return eaten;
+}
+
+int gm_ime_macos(goome *g, int on, const goome_rect *caret)
+{
+    mac_win *w = g->ov_priv;
+    if (!w || !w->view) return on ? gm_fail(g, GOOME_ENOTSUP, "the ime only works in window mode on macos") : GOOME_OK;
+    void *pool = mac.pool_push();
+    mac_id ctx = mac_i(w->view, "inputContext");
+    if (macime.w && macime.w != w) {
+        mac_ime_gone(macime.w);
+    }
+    if (!on) {
+        if (macime.w == w && macime.marked) {
+            if (ctx) mac_v(ctx, "discardMarkedText");
+            mac_ime_set_pre(w, "", 0);
+        }
+        macime.on = 0;
+    } else {
+        macime.w = w, macime.on = 1, macime.caret = *caret;
+        if (ctx) mac_v(ctx, "invalidateCharacterCoordinates");
+    }
+    mac.pool_pop(pool);
+    return on && !ctx ? gm_fail(g, GOOME_ENOTSUP, "the view got no input context") : GOOME_OK;
+}
+
 static void mac_wclose(goome *g)
 {
     mac_win *w = g->ov_priv;
     if (!w) return;
+    mac_ime_gone(w);
     void *pool = mac.pool_push();
     if (w->hid) mac_v(mac_c("NSCursor"), "unhide");
     if (w->win) {

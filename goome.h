@@ -118,6 +118,8 @@ enum {
     GOOME_CLOSE, // window close button / alt-f4 / cmd-w, the app decides
     GOOME_FOCUS, // id = 1 gained, 0 lost
     GOOME_DROP,  // a file dropped on the window, msg = path (cut at 63 bytes, goome_drop_path has all of it), x,y = where
+    GOOME_TEXT,    // an ime, dead key or compose finished some text, msg = it (cut at 63 bytes, goome_event_text has all of it)
+    GOOME_PREEDIT, // the text being composed changed, msg = it, id = caret byte offset in it. empty = composing ended
 };
 
 enum {
@@ -197,6 +199,9 @@ int goome_cursor_shape(goome *g); // last one asked for, offscreen embedders rea
 int goome_clipboard_set(goome *g, const char *utf8);
 int goome_clipboard_get(goome *g, char *buf, int cap); // full length (can be > cap-1, buf gets cut + nul), <0 error. can block ~250ms on x11/wayland
 const char *goome_drop_path(goome *g); // full path of the last GOOME_DROP, good until the next poll
+const char *goome_event_text(goome *g); // full utf-8 of the last GOOME_TEXT / GOOME_PREEDIT, good until the next poll
+int goome_preedit_cursor(goome *g); // byte offset of the caret in the last preedit text
+int goome_text_input(goome *g, int on, const goome_rect *caret); // ime on/off, caret (logical) is where the candidate window goes
 
 int goome_push(goome *g, const goome_event *ev); // queue an event, any mode
 int goome_resize(goome *g, int w, int h, double scale); // offscreen only
@@ -568,6 +573,10 @@ struct goome {
     int cursor;
     char *clip;
     char drop[4096];
+    char *ime_q, *ime_text;
+    size_t ime_qlen, ime_qcap;
+    int ime_cur, ime_on;
+    goome_rect ime_caret;
     int nhit;
     goome_rect *hit;
     goome_canvas *frame;
@@ -605,12 +614,15 @@ int gm_of_resize(struct goome *g, int w, int h, double scale);
 int gm_clip_keep(struct goome *g, const char *s);
 int gm_clip_copy(struct goome *g, char **out);
 void gm_drop(struct goome *g, double x, double y, const char *path);
+int gm_ime_push(struct goome *g, int type, const char *s, int n, int cursor);
 #if defined(_WIN32)
 const gm_cap *gm_cap_win32(void);
 const gm_ov *gm_ov_win32(void);
+int gm_ime_win32(struct goome *g, int on, const goome_rect *caret);
 #elif defined(__APPLE__)
 const gm_cap *gm_cap_macos(void);
 const gm_ov *gm_ov_macos(void);
+int gm_ime_macos(struct goome *g, int on, const goome_rect *caret);
 #elif defined(__linux__) || defined(__FreeBSD__)
 #define GM_LINUX 1
 const gm_ov *gm_ov_wayland(void);
@@ -619,6 +631,8 @@ const gm_ov *gm_ov_x11(void);
 const gm_cap *gm_cap_x11(void);
 const gm_cap *gm_cap_mutter(void);
 const gm_cap *gm_cap_portal(void);
+int gm_ime_x11(struct goome *g, int on, const goome_rect *caret);
+int gm_ime_wayland(struct goome *g, int on, const goome_rect *caret);
 int gm_uri_paths(const char *s, size_t n, char **out);
 void gm_drop_next(struct goome *g, const char *drops, int *off, int len, double x, double y);
 #endif
@@ -1071,6 +1085,7 @@ void goome_close(goome *g)
 #endif
     free(g->clip);
     free(g->hit);
+    free(g->ime_q), free(g->ime_text);
     free(g);
 }
 
@@ -1157,6 +1172,8 @@ int goome_end(goome *g, goome_canvas *c, const goome_rect *hits, int n)
     return g->ov->commit(g, c->mon, c, hits, n);
 }
 
+static void gm_ime_take(goome *g, goome_event *ev);
+
 int goome_poll(goome *g, goome_event *ev, int timeout_ms)
 {
     if (!g || !ev) return GOOME_EARG;
@@ -1166,6 +1183,7 @@ int goome_poll(goome *g, goome_event *ev, int timeout_ms)
         if (g->qlen) {
             *ev = g->q[g->qhead];
             g->qhead = (g->qhead + 1) % GM_QLEN, g->qlen--;
+            if (ev->type == GOOME_TEXT || ev->type == GOOME_PREEDIT) gm_ime_take(g, ev);
             return 1;
         }
         if (!g->ov->wait) return 0;
@@ -1350,6 +1368,12 @@ const char *goome_drop_path(goome *g) { return g && g->drop[0] ? g->drop : NULL;
 int goome_push(goome *g, const goome_event *ev)
 {
     if (!g || !ev) return GOOME_EARG;
+    if (ev->type == GOOME_TEXT || ev->type == GOOME_PREEDIT) {
+        const char *t = ev->msg[0] ? ev->msg : ev->text;
+        int cap = ev->msg[0] ? (int)sizeof(ev->msg) : (int)sizeof(ev->text), n = 0;
+        while (n < cap && t[n]) n++;
+        return gm_ime_push(g, ev->type, t, n, ev->id);
+    }
     return gm_push(g, ev) ? GOOME_OK : gm_fail(g, GOOME_EAGAIN, "the event queue is full");
 }
 
@@ -1455,6 +1479,71 @@ int goome_hit(goome *g, double x, double y)
         if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) return 1;
     }
     return 0;
+}
+
+int gm_ime_push(goome *g, int type, const char *s, int n, int cursor)
+{
+    if (n < 0) n = (int)strlen(s);
+    if (g->ime_qlen + (size_t)n + 1 > g->ime_qcap) {
+        size_t cap = (g->ime_qlen + (size_t)n + 1) * 2;
+        char *q = realloc(g->ime_q, cap);
+        if (!q) return gm_fail(g, GOOME_ENOMEM, "no memory for ime text");
+        g->ime_q = q, g->ime_qcap = cap;
+    }
+    goome_event e;
+    memset(&e, 0, sizeof(e));
+    e.type = type, e.id = cursor < 0 ? 0 : cursor > n ? n : cursor;
+    int m = n < (int)sizeof(e.msg) - 1 ? n : (int)sizeof(e.msg) - 1;
+    if (m < n)
+        while (m > 0 && ((unsigned char)s[m] & 0xC0) == 0x80) m--;
+    memcpy(e.msg, s, (size_t)m);
+    while (e.id > 0 && e.id < n && ((unsigned char)s[e.id] & 0xC0) == 0x80) e.id--;
+    if (!gm_push(g, &e)) return gm_fail(g, GOOME_EAGAIN, "the event queue is full");
+    memcpy(g->ime_q + g->ime_qlen, s, (size_t)n);
+    g->ime_q[g->ime_qlen + (size_t)n] = 0;
+    g->ime_qlen += (size_t)n + 1;
+    return GOOME_OK;
+}
+
+static void gm_ime_take(goome *g, goome_event *ev)
+{
+    size_t n = g->ime_qlen ? strlen(g->ime_q) : 0;
+    char *t = malloc(n + 1);
+    if (t) {
+        if (n) memcpy(t, g->ime_q, n);
+        t[n] = 0;
+        free(g->ime_text);
+        g->ime_text = t;
+    }
+    if (g->ime_qlen) {
+        g->ime_qlen -= n + 1;
+        memmove(g->ime_q, g->ime_q + n + 1, g->ime_qlen);
+    }
+    if (ev->type == GOOME_PREEDIT) g->ime_cur = ev->id;
+}
+
+const char *goome_event_text(goome *g) { return g && g->ime_text ? g->ime_text : ""; }
+int goome_preedit_cursor(goome *g) { return g ? g->ime_cur : 0; }
+
+int goome_text_input(goome *g, int on, const goome_rect *caret)
+{
+    if (!g) return GOOME_EARG;
+    on = !!on;
+    goome_rect r = caret ? *caret : g->ime_caret;
+    if (r.w < 1) r.w = 1;
+    if (r.h < 1) r.h = 1;
+    g->ime_on = on, g->ime_caret = r;
+    const char *n = g->ov ? g->ov->name : "";
+    if (!strcmp(n, "test") || !strcmp(n, "offscreen")) return GOOME_OK;
+#if defined(_WIN32)
+    if (!strcmp(n, "win32")) return gm_ime_win32(g, on, &r);
+#elif defined(__APPLE__)
+    if (!strcmp(n, "macos")) return gm_ime_macos(g, on, &r);
+#elif defined(GM_LINUX)
+    if (!strcmp(n, "x11")) return gm_ime_x11(g, on, &r);
+    if (!strcmp(n, "wayland")) return gm_ime_wayland(g, on, &r);
+#endif
+    return on ? gm_fail(g, GOOME_ENOTSUP, "%s has no ime support", n) : GOOME_OK;
 }
 #ifndef GOOME_NO_DRAW
 #include <stdlib.h>
@@ -9115,6 +9204,7 @@ double goome_text_line_height(goome_font *f, double size)
 #define UI_MAXWIN 64
 #define UI_MAXHIT 256
 #define UI_MAXKEY 64
+#define UI_IME_KEY 0x7E000
 #define UI_MAXFR 16
 #define UI_MAXSCR 16
 #define UI_MAXCLIP 32
@@ -9343,6 +9433,10 @@ struct goome_ui {
     char *undo;
     int undo_cap, undo_cur, undo_kind;
     uint32_t undo_id;
+    char *ime_buf, *ime_pre;
+    int ime_len, ime_cap, ime_at[UI_MAXKEY], ime_plen, ime_pcap, ime_pcur, ime_want, ime_on;
+    uint32_t ime_id;
+    goome_rect ime_rect, ime_sent;
 
     struct ui_ed_s *eds[UI_MAXED];
     goome_font *mono;
@@ -10092,6 +10186,8 @@ void goome_ui_free(goome_ui *u)
     for (int i = 0; i < UI_MAXPOP; i++) ui_list_free(&u->plist[i]);
     for (int i = 0; i < UI_NBLK; i++) free(u->blk[i]);
     free(u->undo);
+    if (u->ime_on) goome_text_input(u->g, 0, NULL);
+    free(u->ime_buf), free(u->ime_pre);
     free(u->idx);
     ui_ed_free_all(u);
     free(u->dd_data);
@@ -10264,10 +10360,15 @@ static void ui_keys_pre(goome_ui *u)
     }
 }
 
+static int ui_ime_feed(goome_ui *u, const goome_event *e);
+static void ui_ime_sync(goome_ui *u);
+
 int goome_ui_feed(goome_ui *u, const goome_event *e)
 {
     if (!u || !e) return 0;
     switch (e->type) {
+    case GOOME_TEXT:
+    case GOOME_PREEDIT: return ui_ime_feed(u, e);
     case GOOME_MOTION:
         u->mx = e->x, u->my = e->y, u->got_pos = 1;
         return u->active || ui_over(u, e->x, e->y);
@@ -10498,6 +10599,7 @@ void goome_ui_end(goome_ui *u)
     if (u->tab_new) ui_focus_to(u, u->tab_new, 1, u->tab_kind), u->tab_came = 1;
     u->tab_new = 0, u->tab_req = 0, u->rad_only = 0, u->want_focus = 0;
     if (goome_mode(u->g) == GOOME_MODE_OVERLAY) ui_keyboard(u, u->focus || u->npop);
+    ui_ime_sync(u);
     if (u->popup && !u->pop_seen) u->popup = 0;
     ui_grab_set(u, u->down && u->grab_frame > 0 && u->frame - u->grab_frame < (u->nmon > 1 ? u->nmon : 1) && (u->auto_grab & GOOME_WANT_MOUSE));
     if (!u->down) u->active = 0;
@@ -11391,6 +11493,106 @@ static int ui_num_ok(const char *t)
     return 1;
 }
 
+static int ui_ime_keep(char **b, int *cap, int at, const char *s, int n)
+{
+    if (at + n + 1 > *cap) {
+        int c = (at + n + 1) * 2;
+        char *m = realloc(*b, (size_t)c);
+        if (!m) return 0;
+        *b = m, *cap = c;
+    }
+    memcpy(*b + at, s, (size_t)n);
+    (*b)[at + n] = 0;
+    return 1;
+}
+
+static int ui_ime_feed(goome_ui *u, const goome_event *e)
+{
+    const char *full = goome_event_text(u->g), *s = e->msg;
+    size_t ml = strlen(e->msg);
+    if (ml >= sizeof(e->msg) - 4 && !strncmp(full, e->msg, ml)) s = full;
+    int n = (int)strlen(s);
+    if (e->type == GOOME_PREEDIT) {
+        if (!ui_ime_keep(&u->ime_pre, &u->ime_pcap, 0, s, n)) return 0;
+        u->ime_plen = n, u->ime_pcur = e->id < 0 ? 0 : e->id > n ? n : e->id;
+        return u->focus != 0;
+    }
+    if (!u->focus || u->nkeys >= UI_MAXKEY || !n) return u->focus != 0;
+    if (!u->nkeys) u->ime_len = 0;
+    if (!ui_ime_keep(&u->ime_buf, &u->ime_cap, u->ime_len, s, n)) return 1;
+    u->ime_at[u->nkeys] = u->ime_len, u->ime_len += n + 1;
+    ui_key *k = &u->keys[u->nkeys++];
+    k->key = UI_IME_KEY, k->mods = 0, k->text[0] = 0;
+    return 1;
+}
+
+static char *ui_ime_take(goome_ui *u, int k, int lines, int num, int *n)
+{
+    const char *s = u->ime_buf + u->ime_at[k];
+    int len = (int)strlen(s), w = 0;
+    char *t = malloc((size_t)len + 1);
+    *n = 0;
+    if (!t) return NULL;
+    for (int i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)s[i];
+        char one[2] = {(char)c, 0};
+        if (c == '\r') continue;
+        if (c == '\n' || c == '\t') c = lines && c == '\n' ? '\n' : ' ';
+        else if (c < 32 || c == 127) continue;
+        if (num && !ui_num_ok(one)) continue;
+        t[w++] = (char)c;
+    }
+    t[w] = 0;
+    *n = w;
+    return t;
+}
+
+static int ui_ime_commit(goome_ui *u, int k, uint32_t id, char *buf, int *len, int cap, int *cur, int *anc, int num)
+{
+    int n, ch = 0, lo = *anc < *cur ? *anc : *cur, hi = *anc < *cur ? *cur : *anc;
+    char *t = ui_ime_take(u, k, 0, num, &n);
+    if (t && n > 0) {
+        ui_undo_keep(u, id, buf, *len, *cur, 3);
+        *cur = ui_del(buf, len, lo, hi);
+        *cur += ui_ins(buf, len, cap, *cur, t, n);
+        *anc = *cur, ch = 1;
+        u->undo_kind = 0;
+    }
+    free(t);
+    return ch;
+}
+
+static void ui_ime_show(goome_ui *u, uint32_t id, double x, double y, double h)
+{
+    const goome_theme *th = &u->th;
+    if (u->ime_id != id) u->ime_id = id, u->ime_plen = 0;
+    u->ime_want = 1;
+    double w = 0;
+    if (u->ime_plen > 0) {
+        double lh = goome_text_line_height(th->font, u->size), ty = ui_round(y + (h - lh) / 2);
+        double cx = ui_tw(u, u->ime_pre, u->ime_pcur, 0);
+        w = ui_tw(u, u->ime_pre, u->ime_plen, 0);
+        ui_rect(u, ui_bx(x - 1, y, w + 3, h), 2, th->input_bg | 0xFF000000u);
+        ui_text(u, x, ty, u->ime_pre, u->ime_plen, 0, th->text);
+        ui_rect(u, ui_bx(x, ty + lh - 1, w, 1), 0, th->text);
+        ui_rect(u, ui_bx(x + cx, y + 1, th->caret_w > 0 ? th->caret_w : 1.5, h - 2), 0, ui_c(th->caret, th->accent));
+    }
+    u->ime_rect = (goome_rect){(int)ui_floor(x), (int)ui_floor(y), (int)ui_floor(w + 1.999), (int)ui_floor(h + 0.999)};
+}
+
+static void ui_ime_sync(goome_ui *u)
+{
+    int want = u->ime_want && u->focus && u->focus == u->ime_id;
+    u->ime_want = 0;
+    if (want && (!u->ime_on || memcmp(&u->ime_rect, &u->ime_sent, sizeof(goome_rect)))) {
+        goome_text_input(u->g, 1, &u->ime_rect);
+        u->ime_on = 1, u->ime_sent = u->ime_rect;
+    } else if (!want && u->ime_on) {
+        goome_text_input(u->g, 0, NULL);
+        u->ime_on = 0, u->ime_plen = 0, u->ime_id = 0;
+    }
+}
+
 int goome_ui_input(goome_ui *u, const char *label, char *buf, int cap) { return goome_ui_input_ex(u, label, buf, cap, 0, NULL); }
 
 int goome_ui_input_ex(goome_ui *u, const char *label, char *buf, int cap, int flags, const char *hint)
@@ -11449,6 +11651,11 @@ int goome_ui_input_ex(goome_ui *u, const char *label, char *buf, int cap, int fl
             ui_key *e = &u->keys[k];
             int key = e->key, m = e->mods, sh = m & GOOME_SHIFT, act = ui_act(u, key, m);
             int lo = anc < cur ? anc : cur, hi = anc < cur ? cur : anc, has = lo != hi;
+            if (key == UI_IME_KEY) {
+                if (!ro) ch |= ui_ime_commit(u, k, id, buf, &len, cap, &cur, &anc, num);
+                s->v[3] = (double)u->now;
+                continue;
+            }
             if (!key && !e->text[0]) continue;
             s->v[3] = (double)u->now;
             if (ro && (act == GOOME_ACT_PASTE || act == GOOME_ACT_UNDO || act == GOOME_ACT_REDO || act == GOOME_ACT_DEL_WORD_LEFT || act == GOOME_ACT_DEL_WORD_RIGHT)) continue;
@@ -11567,6 +11774,7 @@ int goome_ui_input_ex(goome_ui *u, const char *label, char *buf, int cap, int fl
     if (focused) {
         long t = u->now - (long)s->v[3], bl = u->cfg.blink_ms;
         if (bl <= 0 || (t / bl) % 2 == 0) ui_rect(u, ui_bx(x + cx, b.y + b.h / 2 - u->lh / 2 + 1, th->caret_w > 0 ? th->caret_w : 1.5, u->lh - 2), 0, ui_c(th->caret, th->accent));
+        if (!pw && !ro) ui_ime_show(u, id, x + ui_cx(u, buf, len, anc < cur ? anc : cur, NULL, 0), b.y + b.h / 2 - u->lh / 2, u->lh);
     }
     ui_clip_pop(u);
     return enter ? 2 : ch;
@@ -13434,6 +13642,13 @@ int goome_ui_text_edit(goome_ui *u, const char *id, char *buf, int cap, double h
             int lo = e->anc < e->cur ? e->anc : e->cur, hi = e->anc < e->cur ? e->cur : e->anc, has = lo != hi;
             int c = e->cur, keepx = 0, nav = 1, kind = -1;
             e->blink = u->now;
+            if (key == UI_IME_KEY) {
+                int n;
+                char *t = ro ? NULL : ui_ime_take(u, k, 1, 0, &n);
+                if (t && n) e->brk = 1, ch |= ui_ed_edit(e, buf, &len, cap, lo, hi, t, n, 0), e->brk = 1, moved = 1;
+                free(t);
+                continue;
+            }
             if (act == GOOME_ACT_SELECT_ALL) e->anc = 0, c = len, nav = 0;
             else if (act == GOOME_ACT_COPY || act == GOOME_ACT_CUT) {
                 nav = 0;
@@ -13634,6 +13849,11 @@ int goome_ui_text_edit(goome_ui *u, const char *id, char *buf, int cap, double h
         long t = u->now - e->blink, bl = u->cfg.blink_ms;
         double cwd = th->caret_w > 0 ? th->caret_w : 2;
         if (bl <= 0 || (t / bl) % 2 == 0) ui_rect(u, ui_bx(ox + cx - (th->caret_w > 0 ? 0 : 0.5), oy + cg * rh + 1, cwd, rh - 2), 1, ui_c(th->caret, th->accent));
+        if (!ro) {
+            double ix = cx;
+            int ig = lo < e->cur ? ui_ed_locate(u, e, buf, len, lo, &ix) : cg;
+            ui_ime_show(u, eid, ox + ix, oy + ig * rh, rh);
+        }
     }
     ui_clip_pop(u);
     if (nn) {
@@ -15043,7 +15263,7 @@ typedef struct {
     char s[256];
 } tb_step;
 
-enum { TB_CLICK = 1, TB_HOVER, TB_HOLD, TB_SCROLL, TB_KEY, TB_HOTKEY, TB_SEND, TB_RESIZE, TB_CLOSE, TB_FOCUS, TB_DROP, TB_GRABBED };
+enum { TB_CLICK = 1, TB_HOVER, TB_HOLD, TB_SCROLL, TB_KEY, TB_HOTKEY, TB_SEND, TB_RESIZE, TB_CLOSE, TB_FOCUS, TB_DROP, TB_GRABBED, TB_TEXT, TB_PREEDIT, TB_IME };
 
 typedef struct {
     char frames[1024], shots[1024];
@@ -15174,6 +15394,38 @@ static void tb_xy(const char **p, int *x, int *y)
     while (**p == ' ') (*p)++;
 }
 
+static void tb_ime_parse(const char *q, tb_step *s)
+{
+    snprintf(s->s, sizeof(s->s), "%s", q);
+    int n = (int)strlen(s->s), sp = n;
+    while (sp > 0 && s->s[sp - 1] != ' ') sp--;
+    s->a = -1;
+    if (sp > 0 && sp < n) {
+        const char *d = s->s + sp;
+        int ok = 1;
+        for (const char *c = d; *c; c++) ok &= *c >= '0' && *c <= '9';
+        if (ok) {
+            s->a = gm_num(&d);
+            s->s[sp - 1] = 0;
+        }
+    }
+    if (s->a < 0) s->a = (int)strlen(s->s);
+}
+
+static void tb_ime_fire(goome *g, const tb_step *s)
+{
+    if (s->type != TB_IME && !(tb.win ? tb.focused : g->kb_on)) return;
+    if (s->type == TB_TEXT) gm_ime_push(g, GOOME_TEXT, s->s, -1, 0);
+    else if (s->type == TB_PREEDIT) gm_ime_push(g, GOOME_PREEDIT, s->s, -1, s->a);
+    else {
+        goome_event e;
+        memset(&e, 0, sizeof(e));
+        e.type = GOOME_CONTROL;
+        snprintf(e.msg, sizeof(e.msg), "ime %d %d,%d %dx%d", g->ime_on, g->ime_caret.x, g->ime_caret.y, g->ime_caret.w, g->ime_caret.h);
+        gm_push(g, &e);
+    }
+}
+
 // "<tick> click x,y" etc, one per line (or split with ;). the readme has the full list
 static void tb_parse(const char *text)
 {
@@ -15231,6 +15483,9 @@ static void tb_parse(const char *text)
         else if (tb_word(&q, "focus")) s.type = TB_FOCUS, s.a = gm_num(&q);
         else if (tb_word(&q, "drop")) s.type = TB_DROP, tb_xy(&q, &s.x, &s.y), snprintf(s.s, sizeof(s.s), "%s", q);
         else if (tb_word(&q, "grabbed")) s.type = TB_GRABBED;
+        else if (tb_word(&q, "text")) s.type = TB_TEXT, snprintf(s.s, sizeof(s.s), "%s", q);
+        else if (tb_word(&q, "preedit")) s.type = TB_PREEDIT, tb_ime_parse(q, &s);
+        else if (tb_word(&q, "ime")) s.type = TB_IME;
         else continue;
         if (tb.nsteps == cap) {
             tb_step *n = realloc(tb.steps, sizeof(tb_step) * (size_t)(cap *= 2));
@@ -15479,6 +15734,9 @@ static int tb_wait(goome *g, int timeout_ms)
                 gm_push(g, &e);
                 break;
             }
+            case TB_TEXT:
+            case TB_PREEDIT:
+            case TB_IME: tb_ime_fire(g, s); break;
             }
         }
         if (t >= tb.end && !tb.ended && t == tb.tick) {
@@ -15639,6 +15897,7 @@ const gm_ov *gm_ov_offscreen(void) { return &of_ov; }
 #if defined(GM_LINUX)
 
 #include <dlfcn.h>
+#include <locale.h>
 #include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16446,6 +16705,10 @@ static int x11_utf8(char *out, unsigned cp)
     return 0;
 }
 
+static int x11i_lookup(goome *g, x11_input_ev *k);
+static int x11i_filter(x11_event *ev);
+static void x11i_drop(goome *g);
+
 static void x11_key(goome *g, x11_input_ev *k, const x11_grab *gr, int ngr, int keys)
 {
     unsigned want = k->state & (X11_SHIFT | X11_CONTROL | X11_MOD1 | X11_MOD4);
@@ -16458,6 +16721,7 @@ static void x11_key(goome *g, x11_input_ev *k, const x11_grab *gr, int ngr, int 
             return;
         }
     if (!keys) return;
+    if (x11i_lookup(g, k)) return;
     char buf[16] = {0};
     unsigned long sym = 0;
     int n = X11.LookupString(k, buf, (int)sizeof(buf) - 1, &sym, NULL);
@@ -16537,6 +16801,7 @@ static int x11_ov_wait(goome *g, int ms)
         while (X11.Pending(x11.dpy)) {
             x11_event ev;
             X11.NextEvent(x11.dpy, &ev);
+            if (x11i_filter(&ev)) continue;
             x11_handle(g, &ev);
         }
         x11_check(g, 0);
@@ -17301,6 +17566,7 @@ static int x11_win_pump(goome *g, x11_win *w)
     while (X11.Pending(w->dpy)) {
         x11_event ev;
         X11.NextEvent(w->dpy, &ev);
+        if (x11i_filter(&ev)) continue;
         x11_win_handle(g, w, &ev);
     }
     return 0;
@@ -17503,6 +17769,7 @@ static void x11_win_close(goome *g)
 {
     x11_win *w = g->ov_priv;
     if (!w) return;
+    x11i_drop(g);
     if (w->dpy) {
         x11_ungrab_keys(w->dpy, w->root, w->grabbed, w->ngrabbed);
         x11_win_free_buf(w);
@@ -17526,6 +17793,7 @@ static void x11_ov_close(goome *g)
         x11_win_close(g);
         return;
     }
+    x11i_drop(g);
     if (x11.dpy) {
         x11_ungrab_keys(x11.dpy, x11.root, x11.grabbed, x11.ngrabbed);
         if (x11.kb) X11.UngrabKeyboard(x11.dpy, 0);
@@ -17548,6 +17816,335 @@ static void x11_ov_close(goome *g)
 static const gm_ov x11_ov = {"x11", x11_ov_open, x11_ov_canvas, x11_ov_commit, x11_ov_wait, x11_ov_pointer, x11_ov_keyboard, x11_ov_hotkeys,
                              x11_ov_close, GOOME_CAP_GLOBAL_POINTER | GOOME_CAP_KEYBOARD | GOOME_CAP_HOTKEYS | GOOME_CAP_GRAB, NULL, NULL, NULL, NULL, x11_ov_grab};
 const gm_ov *gm_ov_x11(void) { return &x11_ov; }
+
+typedef struct {
+    short x, y;
+} x11i_point;
+
+typedef struct {
+    void *data;
+    void (*fn)(void);
+} x11i_cb;
+
+typedef struct {
+    unsigned short length;
+    unsigned long *feedback;
+    int wide;
+    union {
+        char *mb;
+        int32_t *wc;
+    } s;
+} x11i_text;
+
+typedef struct {
+    int caret, first, len;
+    x11i_text *text;
+} x11i_draw;
+
+typedef struct {
+    int position, direction, style;
+} x11i_caret;
+
+typedef struct {
+    unsigned short n;
+    unsigned long *styles;
+} x11i_styles;
+
+static struct {
+    int tried, ok;
+    char *(*SetLocaleModifiers)(const char *);
+    int (*SupportsLocale)(void);
+    void *(*OpenIM)(x11_dpy *, void *, char *, char *);
+    int (*CloseIM)(void *);
+    char *(*GetIMValues)(void *, ...);
+    void *(*CreateIC)(void *, ...);
+    void (*DestroyIC)(void *);
+    void (*SetICFocus)(void *);
+    void (*UnsetICFocus)(void *);
+    char *(*SetICValues)(void *, ...);
+    char *(*GetICValues)(void *, ...);
+    void *(*VaCreateNestedList)(int, ...);
+    int (*utf8LookupString)(void *, x11_input_ev *, char *, int, unsigned long *, int *);
+    int (*FilterEvent)(x11_event *, x11_xid);
+    char *(*utf8ResetIC)(void *);
+} XI;
+
+static struct {
+    goome *g;
+    x11_dpy *dpy;
+    x11_xid win;
+    void *im, *ic;
+    unsigned long style;
+    int focused, failed, npre, pcur, sent;
+    uint32_t pre[256];
+    x11i_cb cbs[4];
+} x11i;
+
+enum { X11I_PRE_CALLBACKS = 2, X11I_PRE_POSITION = 4, X11I_PRE_NOTHING = 8, X11I_ST_NOTHING = 0x400, X11I_ST_NONE = 0x800 };
+
+static int x11i_load(void)
+{
+    if (XI.tried) return XI.ok;
+    XI.tried = 1;
+    void *xl = dlopen("libX11.so.6", RTLD_NOW | RTLD_GLOBAL);
+    if (!xl) return 0;
+    int ok = 1;
+#define X11I_L(f) ok &= (*(void **)&XI.f = dlsym(xl, "X" #f)) != NULL
+    X11I_L(SetLocaleModifiers);
+    X11I_L(SupportsLocale);
+    X11I_L(OpenIM);
+    X11I_L(CloseIM);
+    X11I_L(GetIMValues);
+    X11I_L(CreateIC);
+    X11I_L(DestroyIC);
+    X11I_L(SetICFocus);
+    X11I_L(UnsetICFocus);
+    X11I_L(SetICValues);
+    X11I_L(GetICValues);
+    X11I_L(VaCreateNestedList);
+    X11I_L(utf8LookupString);
+    X11I_L(FilterEvent);
+    X11I_L(utf8ResetIC);
+#undef X11I_L
+    return XI.ok = ok;
+}
+
+static void x11i_send_pre(void)
+{
+    char out[256 * 4 + 1];
+    int n = 0, cur = 0;
+    for (int i = 0; i < x11i.npre; i++) {
+        if (i == x11i.pcur) cur = n;
+        n += x11_utf8(out + n, x11i.pre[i]);
+    }
+    if (x11i.pcur >= x11i.npre) cur = n;
+    out[n] = 0;
+    if (x11i.g && (n || x11i.sent)) gm_ime_push(x11i.g, GOOME_PREEDIT, out, n, cur);
+    x11i.sent = n > 0;
+}
+
+static int x11i_pre_start(void *ic, void *data, void *call)
+{
+    x11i.npre = x11i.pcur = 0;
+    return -1;
+}
+
+static void x11i_pre_done(void *ic, void *data, void *call)
+{
+    x11i.npre = x11i.pcur = 0;
+    x11i_send_pre();
+}
+
+static int x11i_u8(const unsigned char *s, int *i, int n)
+{
+    int c = s[(*i)++], more = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : c >= 0xC0 ? 1 : 0;
+    c &= more == 3 ? 7 : more == 2 ? 15 : more == 1 ? 31 : 127;
+    while (more-- > 0 && *i < n && (s[*i] & 0xC0) == 0x80) c = c << 6 | (s[(*i)++] & 63);
+    return c;
+}
+
+static void x11i_pre_draw(void *ic, void *data, x11i_draw *d)
+{
+    int first = d->first < 0 ? 0 : d->first > x11i.npre ? x11i.npre : d->first, del = d->len < 0 ? 0 : d->len;
+    if (first + del > x11i.npre) del = x11i.npre - first;
+    uint32_t ins[256];
+    int ni = 0;
+    if (d->text && d->text->length) {
+        if (d->text->wide && d->text->s.wc)
+            for (int i = 0; i < d->text->length && ni < 256; i++) ins[ni++] = (uint32_t)d->text->s.wc[i];
+        else if (d->text->s.mb) {
+            const unsigned char *m = (const unsigned char *)d->text->s.mb;
+            int n = (int)strlen(d->text->s.mb), i = 0;
+            while (i < n && ni < 256 && ni < d->text->length) ins[ni++] = (uint32_t)x11i_u8(m, &i, n);
+        }
+    }
+    if (x11i.npre - del + ni > 256) ni = 256 - (x11i.npre - del);
+    memmove(x11i.pre + first + ni, x11i.pre + first + del, sizeof(uint32_t) * (size_t)(x11i.npre - first - del));
+    memcpy(x11i.pre + first, ins, sizeof(uint32_t) * (size_t)ni);
+    x11i.npre += ni - del;
+    x11i.pcur = d->caret < 0 ? 0 : d->caret > x11i.npre ? x11i.npre : d->caret;
+    x11i_send_pre();
+}
+
+static void x11i_pre_caret(void *ic, void *data, x11i_caret *c)
+{
+    int p = x11i.pcur;
+    if (c->direction == 0) p++;
+    else if (c->direction == 1) p--;
+    else if (c->direction == 8) p = 0;
+    else if (c->direction == 9) p = x11i.npre;
+    else if (c->direction == 10) p = c->position;
+    x11i.pcur = p < 0 ? 0 : p > x11i.npre ? x11i.npre : p;
+    c->position = x11i.pcur;
+    x11i_send_pre();
+}
+
+static void x11i_drop(goome *g)
+{
+    if (x11i.g != g) return;
+    if (x11i.ic) XI.DestroyIC(x11i.ic);
+    if (x11i.im) XI.CloseIM(x11i.im);
+    memset(&x11i, 0, sizeof(x11i));
+}
+
+static int x11i_filter(x11_event *ev)
+{
+    if (!x11i.ic) return 0;
+    return XI.FilterEvent(ev, 0) != 0;
+}
+
+static void *x11i_open_im(x11_dpy *d)
+{
+    char keep[128];
+    const char *was = setlocale(LC_CTYPE, NULL);
+    snprintf(keep, sizeof(keep), "%s", was ? was : "C");
+    if (!strcmp(keep, "C") || !strcmp(keep, "POSIX")) {
+        const char *now = setlocale(LC_CTYPE, "");
+        if (!now || !strcmp(now, "C") || !strcmp(now, "POSIX")) setlocale(LC_CTYPE, "C.UTF-8");
+    }
+    void *im = NULL;
+    if (XI.SupportsLocale()) {
+        if (XI.SetLocaleModifiers("")) im = XI.OpenIM(d, NULL, NULL, NULL);
+        if (!im && XI.SetLocaleModifiers("@im=none")) im = XI.OpenIM(d, NULL, NULL, NULL);
+    }
+    setlocale(LC_CTYPE, keep);
+    return im;
+}
+
+static unsigned long x11i_pick(void *im)
+{
+    x11i_styles *st = NULL;
+    unsigned long best = 0;
+    int rank = 0;
+    if (XI.GetIMValues(im, "queryInputStyle", &st, NULL) || !st) return 0;
+    for (int i = 0; i < st->n; i++) {
+        unsigned long v = st->styles[i];
+        if (!(v & (X11I_ST_NOTHING | X11I_ST_NONE))) continue;
+        int r = (v & X11I_PRE_CALLBACKS) ? 4 : (v & X11I_PRE_POSITION) ? 3 : (v & X11I_PRE_NOTHING) ? 2 : (v & 0x10) ? 1 : 0;
+        if (r > rank) rank = r, best = v;
+    }
+    X11.Free(st);
+    return best;
+}
+
+static int x11i_make(goome *g, x11_dpy *d, x11_xid win, long mask)
+{
+    if (!x11i_load()) return gm_fail(g, GOOME_ENOTSUP, "libX11 has no XIM functions");
+    if (x11i.g && x11i.g != g) x11i_drop(x11i.g);
+    if (x11i.ic) return GOOME_OK;
+    if (x11i.failed) return gm_fail(g, GOOME_ENOTSUP, "no X input method here");
+    x11i.g = g, x11i.dpy = d, x11i.win = win;
+    x11i.im = x11i_open_im(d);
+    x11i.style = x11i.im ? x11i_pick(x11i.im) : 0;
+    if (!x11i.style) {
+        if (x11i.im) XI.CloseIM(x11i.im);
+        x11i.im = NULL, x11i.failed = 1;
+        return gm_fail(g, GOOME_ENOTSUP, "no X input method here");
+    }
+    x11i_point spot = {0, 0};
+    void *attr = NULL;
+    if (x11i.style & X11I_PRE_CALLBACKS) {
+        x11i.cbs[0].fn = (void (*)(void))x11i_pre_start;
+        x11i.cbs[1].fn = (void (*)(void))x11i_pre_done;
+        x11i.cbs[2].fn = (void (*)(void))x11i_pre_draw;
+        x11i.cbs[3].fn = (void (*)(void))x11i_pre_caret;
+        attr = XI.VaCreateNestedList(0, "spotLocation", &spot, "preeditStartCallback", &x11i.cbs[0], "preeditDoneCallback", &x11i.cbs[1],
+                                     "preeditDrawCallback", &x11i.cbs[2], "preeditCaretCallback", &x11i.cbs[3], NULL);
+    } else if (x11i.style & X11I_PRE_POSITION)
+        attr = XI.VaCreateNestedList(0, "spotLocation", &spot, NULL);
+    x11_err = 0;
+    if (attr) x11i.ic = XI.CreateIC(x11i.im, "inputStyle", x11i.style, "clientWindow", win, "focusWindow", win, "preeditAttributes", attr, NULL);
+    else x11i.ic = XI.CreateIC(x11i.im, "inputStyle", x11i.style, "clientWindow", win, "focusWindow", win, NULL);
+    if (attr) X11.Free(attr);
+    if (!x11i.ic) {
+        XI.CloseIM(x11i.im);
+        x11i.im = NULL, x11i.failed = 1;
+        return gm_fail(g, GOOME_ENOTSUP, "the X input method wouldnt make an input context");
+    }
+    unsigned long extra = 0;
+    if (mask && !XI.GetICValues(x11i.ic, "filterEvents", &extra, NULL) && (extra & ~(unsigned long)mask)) X11.SelectInput(d, win, mask | (long)extra);
+    return GOOME_OK;
+}
+
+static void x11i_spot(int x, int y)
+{
+    if (!(x11i.style & (X11I_PRE_CALLBACKS | X11I_PRE_POSITION))) return;
+    x11i_point p = {(short)x, (short)y};
+    void *attr = XI.VaCreateNestedList(0, "spotLocation", &p, NULL);
+    if (!attr) return;
+    XI.SetICValues(x11i.ic, "preeditAttributes", attr, NULL);
+    X11.Free(attr);
+}
+
+static void x11i_reset(void)
+{
+    char *left = XI.utf8ResetIC(x11i.ic);
+    if (left) X11.Free(left);
+    if (x11i.npre) x11i.npre = x11i.pcur = 0, x11i_send_pre();
+}
+
+int gm_ime_x11(goome *g, int on, const goome_rect *caret)
+{
+    x11_dpy *d;
+    x11_xid win;
+    int x, y;
+    long mask = 0;
+    if (g->ov_priv) {
+        x11_win *w = g->ov_priv;
+        d = w->dpy, win = w->win;
+        x = (int)(caret->x * w->scale + 0.5), y = (int)((caret->y + caret->h) * w->scale + 0.5);
+        mask = 1L | 4L | 8L | 16L | 64L | (1L << 15) | (1L << 17) | (1L << 21) | (1L << 22);
+    } else {
+        if (!x11.dpy) return gm_fail(g, GOOME_EGONE, "the X display is gone");
+        d = x11.dpy, win = x11.kwin ? x11.kwin : x11.root;
+        x11_xid child;
+        x = caret->x, y = caret->y + caret->h;
+        if (win != x11.root) X11.TranslateCoordinates(d, x11.root, win, caret->x, caret->y + caret->h, &x, &y, &child);
+        if (x11.kwin) mask = 1L | (1L << 21);
+    }
+    if (!on) {
+        if (x11i.g == g && x11i.ic && x11i.focused) x11i_reset(), XI.UnsetICFocus(x11i.ic), x11i.focused = 0;
+        if (x11i.g == g) X11.Flush(d);
+        return GOOME_OK;
+    }
+    int e = x11i_make(g, d, win, mask);
+    if (e != GOOME_OK) return e;
+    if (x11i.win != win) XI.SetICValues(x11i.ic, "focusWindow", win, NULL), x11i.win = win;
+    x11i_spot(x, y);
+    if (!x11i.focused) XI.SetICFocus(x11i.ic), x11i.focused = 1;
+    X11.Flush(d);
+    return GOOME_OK;
+}
+
+static int x11i_lookup(goome *g, x11_input_ev *k)
+{
+    if (!x11i.ic || !x11i.focused || x11i.g != g) return 0;
+    char small[64], *buf = small;
+    unsigned long sym = 0;
+    int st = 0, n = XI.utf8LookupString(x11i.ic, k, small, (int)sizeof(small) - 1, &sym, &st);
+    if (st == -1 && n > 0) {
+        buf = malloc((size_t)n + 1);
+        if (!buf) return 1;
+        n = XI.utf8LookupString(x11i.ic, k, buf, n, &sym, &st);
+    }
+    int done = 0;
+    if ((st == 2 || st == 4) && n > 0) {
+        buf[n] = 0;
+        char plain[16] = {0};
+        unsigned long psym = 0;
+        x11_input_ev copy = *k;
+        if (k->detail) X11.LookupString(&copy, plain, (int)sizeof(plain) - 1, &psym, NULL);
+        char want[8] = {0};
+        unsigned cp = psym >= 0x20 && psym <= 0xff ? (unsigned)psym : (psym & 0xff000000ul) == 0x01000000ul ? (unsigned)(psym & 0xffffff) : 0;
+        if (cp) want[x11_utf8(want, cp)] = 0;
+        if (!k->detail || strcmp(want, buf)) {
+            if ((unsigned char)buf[0] >= 32 && buf[0] != 127) gm_ime_push(g, GOOME_TEXT, buf, n, 0);
+            done = 1;
+        }
+    }
+    if (buf != small) free(buf);
+    return done;
+}
 
 static const gm_ov x11_wov = {"x11", x11_win_open, x11_win_canvas, x11_win_commit, x11_win_wait, x11_win_pointer, x11_win_keyboard, x11_win_hotkeys,
                               x11_win_close, GOOME_CAP_GLOBAL_POINTER | GOOME_CAP_KEYBOARD | GOOME_CAP_HOTKEYS | GOOME_CAP_WINDOW | GOOME_CAP_CLIPBOARD | GOOME_CAP_CURSOR |
@@ -18020,6 +18617,33 @@ THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
+
+text_input_unstable_v3:
+Copyright © 2012, 2013 Intel Corporation
+Copyright © 2015, 2016 Jan Arne Petersen
+Copyright © 2017, 2018 Red Hat, Inc.
+Copyright © 2018       Purism SPC
+
+Permission to use, copy, modify, distribute, and sell this
+software and its documentation for any purpose is hereby granted
+without fee, provided that the above copyright notice appear in
+all copies and that both that copyright notice and this permission
+notice appear in supporting documentation, and that the name of
+the copyright holders not be used in advertising or publicity
+pertaining to distribution of the software without specific,
+written prior permission.  The copyright holders make no
+representations about the suitability of this software for any
+purpose.  It is provided "as is" without express or implied
+warranty.
+
+THE COPYRIGHT HOLDERS DISCLAIM ALL WARRANTIES WITH REGARD TO THIS
+SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS, IN NO EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY
+SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN
+AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION,
+ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
+THIS SOFTWARE.
 */
 #ifndef GM_WL_PROTO_H
 #define GM_WL_PROTO_H
@@ -22117,6 +22741,289 @@ wp_viewport_set_destination(struct wp_viewport *wp_viewport, int32_t width, int3
 			 WP_VIEWPORT_SET_DESTINATION, NULL, wl_proxy_get_version((struct wl_proxy *) wp_viewport), 0, width, height);
 }
 
+struct wl_seat;
+struct wl_surface;
+struct zwp_text_input_manager_v3;
+struct zwp_text_input_v3;
+
+#ifndef ZWP_TEXT_INPUT_V3_INTERFACE
+#define ZWP_TEXT_INPUT_V3_INTERFACE
+
+extern const struct wl_interface gm_zwp_text_input_v3_interface;
+#endif
+#ifndef ZWP_TEXT_INPUT_MANAGER_V3_INTERFACE
+#define ZWP_TEXT_INPUT_MANAGER_V3_INTERFACE
+
+extern const struct wl_interface gm_zwp_text_input_manager_v3_interface;
+#endif
+
+#ifndef ZWP_TEXT_INPUT_V3_CHANGE_CAUSE_ENUM
+#define ZWP_TEXT_INPUT_V3_CHANGE_CAUSE_ENUM
+
+enum zwp_text_input_v3_change_cause {
+
+	ZWP_TEXT_INPUT_V3_CHANGE_CAUSE_INPUT_METHOD = 0,
+
+	ZWP_TEXT_INPUT_V3_CHANGE_CAUSE_OTHER = 1,
+};
+#endif
+
+#ifndef ZWP_TEXT_INPUT_V3_CONTENT_HINT_ENUM
+#define ZWP_TEXT_INPUT_V3_CONTENT_HINT_ENUM
+
+enum zwp_text_input_v3_content_hint {
+
+	ZWP_TEXT_INPUT_V3_CONTENT_HINT_NONE = 0x0,
+
+	ZWP_TEXT_INPUT_V3_CONTENT_HINT_COMPLETION = 0x1,
+
+	ZWP_TEXT_INPUT_V3_CONTENT_HINT_SPELLCHECK = 0x2,
+
+	ZWP_TEXT_INPUT_V3_CONTENT_HINT_AUTO_CAPITALIZATION = 0x4,
+
+	ZWP_TEXT_INPUT_V3_CONTENT_HINT_LOWERCASE = 0x8,
+
+	ZWP_TEXT_INPUT_V3_CONTENT_HINT_UPPERCASE = 0x10,
+
+	ZWP_TEXT_INPUT_V3_CONTENT_HINT_TITLECASE = 0x20,
+
+	ZWP_TEXT_INPUT_V3_CONTENT_HINT_HIDDEN_TEXT = 0x40,
+
+	ZWP_TEXT_INPUT_V3_CONTENT_HINT_SENSITIVE_DATA = 0x80,
+
+	ZWP_TEXT_INPUT_V3_CONTENT_HINT_LATIN = 0x100,
+
+	ZWP_TEXT_INPUT_V3_CONTENT_HINT_MULTILINE = 0x200,
+};
+#endif
+
+#ifndef ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_ENUM
+#define ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_ENUM
+
+enum zwp_text_input_v3_content_purpose {
+
+	ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_NORMAL = 0,
+
+	ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_ALPHA = 1,
+
+	ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_DIGITS = 2,
+
+	ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_NUMBER = 3,
+
+	ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_PHONE = 4,
+
+	ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_URL = 5,
+
+	ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_EMAIL = 6,
+
+	ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_NAME = 7,
+
+	ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_PASSWORD = 8,
+
+	ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_PIN = 9,
+
+	ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_DATE = 10,
+
+	ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_TIME = 11,
+
+	ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_DATETIME = 12,
+
+	ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_TERMINAL = 13,
+};
+#endif
+
+struct zwp_text_input_v3_listener {
+
+	void (*enter)(void *data,
+		      struct zwp_text_input_v3 *zwp_text_input_v3,
+		      struct wl_surface *surface);
+
+	void (*leave)(void *data,
+		      struct zwp_text_input_v3 *zwp_text_input_v3,
+		      struct wl_surface *surface);
+
+	void (*preedit_string)(void *data,
+			       struct zwp_text_input_v3 *zwp_text_input_v3,
+			       const char *text,
+			       int32_t cursor_begin,
+			       int32_t cursor_end);
+
+	void (*commit_string)(void *data,
+			      struct zwp_text_input_v3 *zwp_text_input_v3,
+			      const char *text);
+
+	void (*delete_surrounding_text)(void *data,
+					struct zwp_text_input_v3 *zwp_text_input_v3,
+					uint32_t before_length,
+					uint32_t after_length);
+
+	void (*done)(void *data,
+		     struct zwp_text_input_v3 *zwp_text_input_v3,
+		     uint32_t serial);
+};
+
+static inline int
+zwp_text_input_v3_add_listener(struct zwp_text_input_v3 *zwp_text_input_v3,
+			       const struct zwp_text_input_v3_listener *listener, void *data)
+{
+	return wl_proxy_add_listener((struct wl_proxy *) zwp_text_input_v3,
+				     (void (**)(void)) listener, data);
+}
+
+#define ZWP_TEXT_INPUT_V3_DESTROY 0
+#define ZWP_TEXT_INPUT_V3_ENABLE 1
+#define ZWP_TEXT_INPUT_V3_DISABLE 2
+#define ZWP_TEXT_INPUT_V3_SET_SURROUNDING_TEXT 3
+#define ZWP_TEXT_INPUT_V3_SET_TEXT_CHANGE_CAUSE 4
+#define ZWP_TEXT_INPUT_V3_SET_CONTENT_TYPE 5
+#define ZWP_TEXT_INPUT_V3_SET_CURSOR_RECTANGLE 6
+#define ZWP_TEXT_INPUT_V3_COMMIT 7
+
+#define ZWP_TEXT_INPUT_V3_ENTER_SINCE_VERSION 1
+
+#define ZWP_TEXT_INPUT_V3_LEAVE_SINCE_VERSION 1
+
+#define ZWP_TEXT_INPUT_V3_PREEDIT_STRING_SINCE_VERSION 1
+
+#define ZWP_TEXT_INPUT_V3_COMMIT_STRING_SINCE_VERSION 1
+
+#define ZWP_TEXT_INPUT_V3_DELETE_SURROUNDING_TEXT_SINCE_VERSION 1
+
+#define ZWP_TEXT_INPUT_V3_DONE_SINCE_VERSION 1
+
+#define ZWP_TEXT_INPUT_V3_DESTROY_SINCE_VERSION 1
+
+#define ZWP_TEXT_INPUT_V3_ENABLE_SINCE_VERSION 1
+
+#define ZWP_TEXT_INPUT_V3_DISABLE_SINCE_VERSION 1
+
+#define ZWP_TEXT_INPUT_V3_SET_SURROUNDING_TEXT_SINCE_VERSION 1
+
+#define ZWP_TEXT_INPUT_V3_SET_TEXT_CHANGE_CAUSE_SINCE_VERSION 1
+
+#define ZWP_TEXT_INPUT_V3_SET_CONTENT_TYPE_SINCE_VERSION 1
+
+#define ZWP_TEXT_INPUT_V3_SET_CURSOR_RECTANGLE_SINCE_VERSION 1
+
+#define ZWP_TEXT_INPUT_V3_COMMIT_SINCE_VERSION 1
+
+static inline void
+zwp_text_input_v3_set_user_data(struct zwp_text_input_v3 *zwp_text_input_v3, void *user_data)
+{
+	wl_proxy_set_user_data((struct wl_proxy *) zwp_text_input_v3, user_data);
+}
+
+static inline void *
+zwp_text_input_v3_get_user_data(struct zwp_text_input_v3 *zwp_text_input_v3)
+{
+	return wl_proxy_get_user_data((struct wl_proxy *) zwp_text_input_v3);
+}
+
+static inline uint32_t
+zwp_text_input_v3_get_version(struct zwp_text_input_v3 *zwp_text_input_v3)
+{
+	return wl_proxy_get_version((struct wl_proxy *) zwp_text_input_v3);
+}
+
+static inline void
+zwp_text_input_v3_destroy(struct zwp_text_input_v3 *zwp_text_input_v3)
+{
+	wl_proxy_marshal_flags((struct wl_proxy *) zwp_text_input_v3,
+			 ZWP_TEXT_INPUT_V3_DESTROY, NULL, wl_proxy_get_version((struct wl_proxy *) zwp_text_input_v3), WL_MARSHAL_FLAG_DESTROY);
+}
+
+static inline void
+zwp_text_input_v3_enable(struct zwp_text_input_v3 *zwp_text_input_v3)
+{
+	wl_proxy_marshal_flags((struct wl_proxy *) zwp_text_input_v3,
+			 ZWP_TEXT_INPUT_V3_ENABLE, NULL, wl_proxy_get_version((struct wl_proxy *) zwp_text_input_v3), 0);
+}
+
+static inline void
+zwp_text_input_v3_disable(struct zwp_text_input_v3 *zwp_text_input_v3)
+{
+	wl_proxy_marshal_flags((struct wl_proxy *) zwp_text_input_v3,
+			 ZWP_TEXT_INPUT_V3_DISABLE, NULL, wl_proxy_get_version((struct wl_proxy *) zwp_text_input_v3), 0);
+}
+
+static inline void
+zwp_text_input_v3_set_surrounding_text(struct zwp_text_input_v3 *zwp_text_input_v3, const char *text, int32_t cursor, int32_t anchor)
+{
+	wl_proxy_marshal_flags((struct wl_proxy *) zwp_text_input_v3,
+			 ZWP_TEXT_INPUT_V3_SET_SURROUNDING_TEXT, NULL, wl_proxy_get_version((struct wl_proxy *) zwp_text_input_v3), 0, text, cursor, anchor);
+}
+
+static inline void
+zwp_text_input_v3_set_text_change_cause(struct zwp_text_input_v3 *zwp_text_input_v3, uint32_t cause)
+{
+	wl_proxy_marshal_flags((struct wl_proxy *) zwp_text_input_v3,
+			 ZWP_TEXT_INPUT_V3_SET_TEXT_CHANGE_CAUSE, NULL, wl_proxy_get_version((struct wl_proxy *) zwp_text_input_v3), 0, cause);
+}
+
+static inline void
+zwp_text_input_v3_set_content_type(struct zwp_text_input_v3 *zwp_text_input_v3, uint32_t hint, uint32_t purpose)
+{
+	wl_proxy_marshal_flags((struct wl_proxy *) zwp_text_input_v3,
+			 ZWP_TEXT_INPUT_V3_SET_CONTENT_TYPE, NULL, wl_proxy_get_version((struct wl_proxy *) zwp_text_input_v3), 0, hint, purpose);
+}
+
+static inline void
+zwp_text_input_v3_set_cursor_rectangle(struct zwp_text_input_v3 *zwp_text_input_v3, int32_t x, int32_t y, int32_t width, int32_t height)
+{
+	wl_proxy_marshal_flags((struct wl_proxy *) zwp_text_input_v3,
+			 ZWP_TEXT_INPUT_V3_SET_CURSOR_RECTANGLE, NULL, wl_proxy_get_version((struct wl_proxy *) zwp_text_input_v3), 0, x, y, width, height);
+}
+
+static inline void
+zwp_text_input_v3_commit(struct zwp_text_input_v3 *zwp_text_input_v3)
+{
+	wl_proxy_marshal_flags((struct wl_proxy *) zwp_text_input_v3,
+			 ZWP_TEXT_INPUT_V3_COMMIT, NULL, wl_proxy_get_version((struct wl_proxy *) zwp_text_input_v3), 0);
+}
+
+#define ZWP_TEXT_INPUT_MANAGER_V3_DESTROY 0
+#define ZWP_TEXT_INPUT_MANAGER_V3_GET_TEXT_INPUT 1
+
+#define ZWP_TEXT_INPUT_MANAGER_V3_DESTROY_SINCE_VERSION 1
+
+#define ZWP_TEXT_INPUT_MANAGER_V3_GET_TEXT_INPUT_SINCE_VERSION 1
+
+static inline void
+zwp_text_input_manager_v3_set_user_data(struct zwp_text_input_manager_v3 *zwp_text_input_manager_v3, void *user_data)
+{
+	wl_proxy_set_user_data((struct wl_proxy *) zwp_text_input_manager_v3, user_data);
+}
+
+static inline void *
+zwp_text_input_manager_v3_get_user_data(struct zwp_text_input_manager_v3 *zwp_text_input_manager_v3)
+{
+	return wl_proxy_get_user_data((struct wl_proxy *) zwp_text_input_manager_v3);
+}
+
+static inline uint32_t
+zwp_text_input_manager_v3_get_version(struct zwp_text_input_manager_v3 *zwp_text_input_manager_v3)
+{
+	return wl_proxy_get_version((struct wl_proxy *) zwp_text_input_manager_v3);
+}
+
+static inline void
+zwp_text_input_manager_v3_destroy(struct zwp_text_input_manager_v3 *zwp_text_input_manager_v3)
+{
+	wl_proxy_marshal_flags((struct wl_proxy *) zwp_text_input_manager_v3,
+			 ZWP_TEXT_INPUT_MANAGER_V3_DESTROY, NULL, wl_proxy_get_version((struct wl_proxy *) zwp_text_input_manager_v3), WL_MARSHAL_FLAG_DESTROY);
+}
+
+static inline struct zwp_text_input_v3 *
+zwp_text_input_manager_v3_get_text_input(struct zwp_text_input_manager_v3 *zwp_text_input_manager_v3, struct wl_seat *seat)
+{
+	struct wl_proxy *id;
+
+	id = wl_proxy_marshal_flags((struct wl_proxy *) zwp_text_input_manager_v3,
+			 ZWP_TEXT_INPUT_MANAGER_V3_GET_TEXT_INPUT, &gm_zwp_text_input_v3_interface, wl_proxy_get_version((struct wl_proxy *) zwp_text_input_manager_v3), 0, NULL, seat);
+
+	return (struct zwp_text_input_v3 *) id;
+}
+
 extern const struct wl_interface gm_wl_buffer_interface;
 extern const struct wl_interface gm_wl_callback_interface;
 extern const struct wl_interface gm_wl_data_device_interface;
@@ -22939,6 +23846,58 @@ GM_WL_PRIVATE const struct wl_interface gm_wp_viewport_interface = {
 	0, NULL,
 };
 
+extern const struct wl_interface gm_wl_seat_interface;
+extern const struct wl_interface gm_wl_surface_interface;
+extern const struct wl_interface gm_zwp_text_input_v3_interface;
+
+static const struct wl_interface *gm_text_input_unstable_v3_types[] = {
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	&gm_wl_surface_interface,
+	&gm_wl_surface_interface,
+	&gm_zwp_text_input_v3_interface,
+	&gm_wl_seat_interface,
+};
+
+static const struct wl_message zwp_text_input_v3_requests[] = {
+	{ "destroy", "", gm_text_input_unstable_v3_types + 0 },
+	{ "enable", "", gm_text_input_unstable_v3_types + 0 },
+	{ "disable", "", gm_text_input_unstable_v3_types + 0 },
+	{ "set_surrounding_text", "sii", gm_text_input_unstable_v3_types + 0 },
+	{ "set_text_change_cause", "u", gm_text_input_unstable_v3_types + 0 },
+	{ "set_content_type", "uu", gm_text_input_unstable_v3_types + 0 },
+	{ "set_cursor_rectangle", "iiii", gm_text_input_unstable_v3_types + 0 },
+	{ "commit", "", gm_text_input_unstable_v3_types + 0 },
+};
+
+static const struct wl_message zwp_text_input_v3_events[] = {
+	{ "enter", "o", gm_text_input_unstable_v3_types + 4 },
+	{ "leave", "o", gm_text_input_unstable_v3_types + 5 },
+	{ "preedit_string", "?sii", gm_text_input_unstable_v3_types + 0 },
+	{ "commit_string", "?s", gm_text_input_unstable_v3_types + 0 },
+	{ "delete_surrounding_text", "uu", gm_text_input_unstable_v3_types + 0 },
+	{ "done", "u", gm_text_input_unstable_v3_types + 0 },
+};
+
+GM_WL_PRIVATE const struct wl_interface gm_zwp_text_input_v3_interface = {
+	"zwp_text_input_v3", 1,
+	8, zwp_text_input_v3_requests,
+	6, zwp_text_input_v3_events,
+};
+
+static const struct wl_message zwp_text_input_manager_v3_requests[] = {
+	{ "destroy", "", gm_text_input_unstable_v3_types + 0 },
+	{ "get_text_input", "no", gm_text_input_unstable_v3_types + 6 },
+};
+
+GM_WL_PRIVATE const struct wl_interface gm_zwp_text_input_manager_v3_interface = {
+	"zwp_text_input_manager_v3", 1,
+	2, zwp_text_input_manager_v3_requests,
+	0, NULL,
+};
+
 // cursor-shape points at it for tablets, we never use them
 GM_WL_PRIVATE const struct wl_interface gm_zwp_tablet_tool_v2_interface = {"zwp_tablet_tool_v2", 1, 0, NULL, 0, NULL};
 
@@ -23486,8 +24445,12 @@ static void wl_free_out(wl_out *o)
     o->mon = -1;
 }
 
+static int wlt_reg(struct wl_display *dpy, struct wl_registry *r, uint32_t name, const char *iface, uint32_t version);
+static void wlt_drop(struct wl_display *dpy);
+
 static void reg_global(void *d, struct wl_registry *r, uint32_t name, const char *iface, uint32_t version)
 {
+    if (wlt_reg(wls.dpy, r, name, iface, version)) return;
     if (!strcmp(iface, "wl_compositor") && !wls.comp) {
         wls.comp_v = version < 4 ? version : 4;
         wls.comp = wl_registry_bind(r, name, &gm_wl_compositor_interface, wls.comp_v);
@@ -23690,6 +24653,7 @@ static void wl_teardown(void)
     for (int i = 0; i < wls.nouts; i++)
         if (wls.outs[i].alive) wl_free_out(&wls.outs[i]);
     if (wls.dpy) {
+        wlt_drop(wls.dpy);
         if (wls.ptr) wl_pointer_release(wls.ptr);
         if (wls.kb) wl_keyboard_release(wls.kb);
         if (wls.arrow) wl_surface_destroy(wls.arrow);
@@ -24620,6 +25584,7 @@ static const struct xdg_surface_listener wl_ws_xdg_listener = {ws_configure};
 static void wl_win_reg(void *d, struct wl_registry *r, uint32_t name, const char *iface, uint32_t v)
 {
     wl_win *w = d;
+    if (wlt_reg(w->dpy, r, name, iface, v)) return;
     if (!strcmp(iface, "wl_compositor") && !w->comp) {
         w->comp_v = v < 6 ? v : 6;
         w->comp = wl_registry_bind(r, name, &gm_wl_compositor_interface, w->comp_v);
@@ -24959,6 +25924,7 @@ static void wl_win_close(goome *g)
     wl_win *w = g->ov_priv;
     if (!w) return;
     if (w->dpy) {
+        wlt_drop(w->dpy);
         wl_win_unmap(w);
         wl_offer_free(w->sel), wl_offer_free(w->dnd);
         if (w->src) wl_data_source_destroy(w->src);
@@ -25207,6 +26173,160 @@ static const gm_cap wlr_cap = {"wlr", wlr_cap_probe, wlr_cap_open, wlr_cap_grab,
 const gm_cap *gm_cap_wlr(void) { return &wlr_cap; }
 
 #undef WL_MARSHAL_FLAG_DESTROY
+typedef struct {
+    struct wl_display *dpy;
+    struct zwp_text_input_manager_v3 *mgr;
+    struct zwp_text_input_v3 *ti;
+    struct wl_surface *in;
+    goome *g;
+    int want, enabled, sent_pre, pcur, has_pre, has_commit;
+    goome_rect r, sent;
+    char *pre, *commit;
+} wlt_slot;
+
+static wlt_slot wlt[4];
+
+static wlt_slot *wlt_of(struct wl_display *dpy)
+{
+    for (int i = 0; i < 4; i++)
+        if (dpy && wlt[i].dpy == dpy) return &wlt[i];
+    return NULL;
+}
+
+static int wlt_reg(struct wl_display *dpy, struct wl_registry *r, uint32_t name, const char *iface, uint32_t version)
+{
+    if (strcmp(iface, "zwp_text_input_manager_v3")) return 0;
+    if (wlt_of(dpy)) return 1;
+    for (int i = 0; i < 4; i++)
+        if (!wlt[i].dpy) {
+            wlt[i].dpy = dpy;
+            wlt[i].mgr = wl_registry_bind(r, name, &gm_zwp_text_input_manager_v3_interface, 1);
+            break;
+        }
+    return 1;
+}
+
+static void wlt_drop(struct wl_display *dpy)
+{
+    wlt_slot *t = wlt_of(dpy);
+    if (!t) return;
+    if (t->ti) zwp_text_input_v3_destroy(t->ti);
+    if (t->mgr) zwp_text_input_manager_v3_destroy(t->mgr);
+    free(t->pre), free(t->commit);
+    memset(t, 0, sizeof(*t));
+}
+
+static void wlt_keep(char **to, const char *s)
+{
+    free(*to);
+    *to = NULL;
+    if (!s) return;
+    size_t n = strlen(s);
+    *to = malloc(n + 1);
+    if (*to) memcpy(*to, s, n + 1);
+}
+
+static void wlt_push_pre(wlt_slot *t, const char *s, int cur)
+{
+    int n = s ? (int)strlen(s) : 0;
+    if (!n && !t->sent_pre) return;
+    gm_ime_push(t->g, GOOME_PREEDIT, s ? s : "", n, cur < 0 ? n : cur);
+    t->sent_pre = n > 0;
+}
+
+static void wlt_apply(wlt_slot *t)
+{
+    if (!t->ti || !t->in) return;
+    if (!t->want) {
+        if (t->enabled) zwp_text_input_v3_disable(t->ti), zwp_text_input_v3_commit(t->ti), t->enabled = 0;
+        wlt_push_pre(t, NULL, 0);
+        return;
+    }
+    if (!t->enabled) {
+        zwp_text_input_v3_enable(t->ti);
+        zwp_text_input_v3_set_content_type(t->ti, ZWP_TEXT_INPUT_V3_CONTENT_HINT_NONE, ZWP_TEXT_INPUT_V3_CONTENT_PURPOSE_NORMAL);
+        t->enabled = 1;
+    } else if (!memcmp(&t->r, &t->sent, sizeof(t->r)))
+        return;
+    zwp_text_input_v3_set_cursor_rectangle(t->ti, t->r.x, t->r.y, t->r.w, t->r.h);
+    zwp_text_input_v3_commit(t->ti);
+    t->sent = t->r;
+}
+
+static void wlt_enter(void *d, struct zwp_text_input_v3 *ti, struct wl_surface *s)
+{
+    wlt_slot *t = d;
+    t->in = s, t->enabled = 0;
+    wlt_apply(t);
+}
+
+static void wlt_leave(void *d, struct zwp_text_input_v3 *ti, struct wl_surface *s)
+{
+    wlt_slot *t = d;
+    if (t->in != s) return;
+    if (t->enabled) zwp_text_input_v3_disable(t->ti), zwp_text_input_v3_commit(t->ti);
+    t->in = NULL, t->enabled = 0;
+    wlt_push_pre(t, NULL, 0);
+}
+
+static void wlt_preedit(void *d, struct zwp_text_input_v3 *ti, const char *text, int32_t begin, int32_t end)
+{
+    wlt_slot *t = d;
+    wlt_keep(&t->pre, text);
+    t->pcur = begin, t->has_pre = 1;
+}
+
+static void wlt_commit_str(void *d, struct zwp_text_input_v3 *ti, const char *text)
+{
+    wlt_slot *t = d;
+    wlt_keep(&t->commit, text);
+    t->has_commit = 1;
+}
+
+static void wlt_delete(void *d, struct zwp_text_input_v3 *ti, uint32_t before, uint32_t after) {}
+
+static void wlt_done(void *d, struct zwp_text_input_v3 *ti, uint32_t serial)
+{
+    wlt_slot *t = d;
+    if (t->has_commit && t->commit && t->commit[0]) gm_ime_push(t->g, GOOME_TEXT, t->commit, -1, 0);
+    wlt_push_pre(t, t->has_pre ? t->pre : NULL, t->pcur);
+    t->has_pre = t->has_commit = 0;
+    wlt_keep(&t->pre, NULL), wlt_keep(&t->commit, NULL);
+}
+
+static const struct zwp_text_input_v3_listener wlt_listener = {wlt_enter, wlt_leave, wlt_preedit, wlt_commit_str, wlt_delete, wlt_done};
+
+int gm_ime_wayland(goome *g, int on, const goome_rect *caret)
+{
+    struct wl_display *dpy;
+    struct wl_seat *seat;
+    goome_rect r = *caret;
+    if (g->ov_priv) {
+        wl_win *w = g->ov_priv;
+        dpy = w->dpy, seat = w->seat;
+        r.x += w->m, r.y += w->m + w->bh;
+    } else {
+        dpy = wls.dpy, seat = wls.seat;
+        for (int i = 0; i < wls.nouts; i++) {
+            wl_out *o = &wls.outs[i];
+            if (o->alive && o->surface && caret->x >= o->area.x && caret->y >= o->area.y && caret->x < o->area.x + o->area.w && caret->y < o->area.y + o->area.h)
+                r.x -= o->area.x, r.y -= o->area.y;
+        }
+    }
+    wlt_slot *t = wlt_of(dpy);
+    if (!t || !t->mgr) return on ? gm_fail(g, GOOME_ENOTSUP, "this compositor has no text-input-v3") : GOOME_OK;
+    if (!t->ti && on) {
+        if (!seat) return gm_fail(g, GOOME_ENOTSUP, "no wayland seat for text input");
+        t->ti = zwp_text_input_manager_v3_get_text_input(t->mgr, seat);
+        if (!t->ti) return gm_fail(g, GOOME_ENOMEM, "couldnt make a text input");
+        zwp_text_input_v3_add_listener(t->ti, &wlt_listener, t);
+    }
+    t->g = g, t->want = on, t->r = r;
+    wlt_apply(t);
+    wl_display_flush(dpy);
+    return GOOME_OK;
+}
+
 #undef wl_proxy_marshal_flags
 #undef wl_proxy_add_listener
 #undef wl_proxy_get_version
@@ -26368,10 +27488,14 @@ static void w32_up(w32_mon *m, int button, LPARAM lp)
 
 static HCURSOR w32_cursor(int shape);
 
+static int w32i_msg(goome *g, HWND h, UINT msg, WPARAM wp, LPARAM lp, LRESULT *out);
+
 static LRESULT CALLBACK w32_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
 {
     w32_mon *m = w32.g ? w32_mon_of(w) : NULL;
     if (!m) return DefWindowProcW(w, msg, wp, lp);
+    LRESULT ir;
+    if (w32i_msg(w32.g, w, msg, wp, lp, &ir)) return ir;
     switch (msg) {
     case WM_LBUTTONDOWN: w32_down(w, m, 1, lp); return 0;
     case WM_MBUTTONDOWN: w32_down(w, m, 2, lp); return 0;
@@ -26853,6 +27977,176 @@ static struct {
     void(WINAPI *drag_finish)(HANDLE);
 } w32x;
 
+typedef struct {
+    DWORD style;
+    POINT pos;
+    RECT area;
+} w32i_comp;
+
+typedef struct {
+    DWORD index, style;
+    POINT pos;
+    RECT area;
+} w32i_cand;
+
+static struct {
+    int tried, composing;
+    HMODULE dll;
+    void *(WINAPI *get)(HWND);
+    BOOL(WINAPI *release)(HWND, void *);
+    LONG(WINAPI *str)(void *, DWORD, void *, DWORD);
+    BOOL(WINAPI *set_comp)(void *, w32i_comp *);
+    BOOL(WINAPI *set_cand)(void *, w32i_cand *);
+    BOOL(WINAPI *assoc)(HWND, void *, DWORD);
+    BOOL(WINAPI *notify)(void *, DWORD, DWORD, DWORD);
+    goome *g;
+    HWND win;
+    int on;
+    RECT r;
+} w32i;
+
+static int w32i_load(void)
+{
+    if (w32i.tried) return w32i.dll != NULL;
+    w32i.tried = 1;
+    w32i.dll = LoadLibraryA("imm32.dll");
+    if (!w32i.dll) return 0;
+    W32_LOAD(w32i.get, w32i.dll, "ImmGetContext");
+    W32_LOAD(w32i.release, w32i.dll, "ImmReleaseContext");
+    W32_LOAD(w32i.str, w32i.dll, "ImmGetCompositionStringW");
+    W32_LOAD(w32i.set_comp, w32i.dll, "ImmSetCompositionWindow");
+    W32_LOAD(w32i.set_cand, w32i.dll, "ImmSetCandidateWindow");
+    W32_LOAD(w32i.assoc, w32i.dll, "ImmAssociateContextEx");
+    W32_LOAD(w32i.notify, w32i.dll, "ImmNotifyIME");
+    if (!w32i.get || !w32i.release || !w32i.str || !w32i.set_comp || !w32i.assoc) {
+        FreeLibrary(w32i.dll);
+        w32i.dll = NULL;
+    }
+    return w32i.dll != NULL;
+}
+
+static void w32i_place(HWND h)
+{
+    void *c = w32i.get(h);
+    if (!c) return;
+    w32i_comp cf;
+    memset(&cf, 0, sizeof(cf));
+    cf.style = 0x20, cf.pos.x = w32i.r.left, cf.pos.y = w32i.r.top, cf.area = w32i.r;
+    w32i.set_comp(c, &cf);
+    if (w32i.set_cand) {
+        w32i_cand cd;
+        memset(&cd, 0, sizeof(cd));
+        cd.style = 0x80, cd.pos.x = w32i.r.left, cd.pos.y = w32i.r.bottom, cd.area = w32i.r;
+        w32i.set_cand(c, &cd);
+    }
+    w32i.release(h, c);
+}
+
+static char *w32i_take(void *c, DWORD what, int upto, int *n, int *cut)
+{
+    LONG bytes = w32i.str(c, what, NULL, 0);
+    *n = 0, *cut = 0;
+    if (bytes < 0) return NULL;
+    int wn = (int)(bytes / 2);
+    WCHAR *ws = malloc(sizeof(WCHAR) * (size_t)(wn + 1));
+    if (!ws) return NULL;
+    if (wn) w32i.str(c, what, ws, (DWORD)bytes);
+    int un = wn ? WideCharToMultiByte(CP_UTF8, 0, ws, wn, NULL, 0, NULL, NULL) : 0;
+    char *u = malloc((size_t)un + 1);
+    if (u) {
+        if (un) WideCharToMultiByte(CP_UTF8, 0, ws, wn, u, un, NULL, NULL);
+        u[un] = 0, *n = un;
+        if (upto > wn) upto = wn;
+        *cut = upto > 0 ? WideCharToMultiByte(CP_UTF8, 0, ws, upto, NULL, 0, NULL, NULL) : 0;
+    }
+    free(ws);
+    return u;
+}
+
+static void w32i_comp_msg(goome *g, HWND h, LPARAM lp)
+{
+    void *c = w32i.get(h);
+    if (!c) return;
+    int n, cut;
+    if (lp & 0x800) {
+        char *t = w32i_take(c, 0x800, 0, &n, &cut);
+        if (t && n) gm_ime_push(g, GOOME_TEXT, t, n, 0);
+        free(t);
+    }
+    if (lp & 0x8) {
+        LONG cur = (lp & 0x80) ? w32i.str(c, 0x80, NULL, 0) : -1;
+        char *t = w32i_take(c, 0x8, cur < 0 ? 1 << 30 : (int)cur, &n, &cut);
+        if (t) gm_ime_push(g, GOOME_PREEDIT, t, n, cut), w32i.composing = n > 0;
+        free(t);
+    } else if ((lp & 0x800) && w32i.composing)
+        gm_ime_push(g, GOOME_PREEDIT, "", 0, 0), w32i.composing = 0;
+    w32i.release(h, c);
+}
+
+static int w32i_msg(goome *g, HWND h, UINT msg, WPARAM wp, LPARAM lp, LRESULT *out)
+{
+    if (!g || g != w32i.g || h != w32i.win || !w32i.dll) return 0;
+    switch (msg) {
+    case WM_IME_SETCONTEXT:
+        *out = DefWindowProcW(h, msg, wp, w32i.on ? (LPARAM)((unsigned long long)lp & ~0x80000000ull) : lp);
+        return 1;
+    case WM_IME_STARTCOMPOSITION:
+        if (!w32i.on) return 0;
+        w32i_place(h);
+        *out = 0;
+        return 1;
+    case WM_IME_COMPOSITION:
+        if (!w32i.on) return 0;
+        w32i_comp_msg(g, h, lp);
+        *out = 0;
+        return 1;
+    case WM_IME_ENDCOMPOSITION:
+        if (w32i.composing) gm_ime_push(g, GOOME_PREEDIT, "", 0, 0), w32i.composing = 0;
+        if (!w32i.on) return 0;
+        *out = 0;
+        return 1;
+    }
+    return 0;
+}
+
+int gm_ime_win32(goome *g, int on, const goome_rect *caret)
+{
+    if (!w32i_load()) return on ? gm_fail(g, GOOME_ENOTSUP, "cant load imm32.dll") : GOOME_OK;
+    HWND h = NULL;
+    RECT r;
+    if (g->ov_priv) {
+        w32_win *w = g->ov_priv;
+        h = w->win;
+        r.left = (LONG)(caret->x * w->s + 0.5), r.top = (LONG)(caret->y * w->s + 0.5);
+        r.right = (LONG)((caret->x + caret->w) * w->s + 0.5), r.bottom = (LONG)((caret->y + caret->h) * w->s + 0.5);
+    } else {
+        for (int i = 0; i < w32.n && !h; i++) {
+            w32_mon *m = &w32.m[i];
+            double lx = m->r.left, ly = m->r.top, lw = (m->r.right - m->r.left) / m->s, lh = (m->r.bottom - m->r.top) / m->s;
+            if (m->win && caret->x >= lx && caret->y >= ly && caret->x < lx + lw && caret->y < ly + lh) {
+                h = m->win;
+                r.left = (LONG)((caret->x - lx) * m->s + 0.5), r.top = (LONG)((caret->y - ly) * m->s + 0.5);
+                r.right = (LONG)((caret->x + caret->w - lx) * m->s + 0.5), r.bottom = (LONG)((caret->y + caret->h - ly) * m->s + 0.5);
+            }
+        }
+    }
+    if (!h) return on ? gm_fail(g, GOOME_EARG, "no goome window under the caret") : GOOME_OK;
+    if (w32i.on && w32i.win && (w32i.win != h || !on)) {
+        void *c = w32i.get(w32i.win);
+        if (c && w32i.notify) w32i.notify(c, 0x15, 4, 0);
+        if (c) w32i.release(w32i.win, c);
+        if (w32i.composing) gm_ime_push(g, GOOME_PREEDIT, "", 0, 0), w32i.composing = 0;
+    }
+    if (!on) {
+        w32i.on = 0;
+        return GOOME_OK;
+    }
+    if (!w32i.on || w32i.win != h) w32i.assoc(h, NULL, 0x10);
+    w32i.g = g, w32i.win = h, w32i.on = 1, w32i.r = r;
+    w32i_place(h);
+    return GOOME_OK;
+}
+
 static HCURSOR w32_cursor(int shape)
 {
     switch (shape) {
@@ -27095,6 +28389,8 @@ static LRESULT CALLBACK w32w_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     w32_win *w = (w32_win *)GetWindowLongPtrW(h, GWLP_USERDATA);
     if (!w) return DefWindowProcW(h, msg, wp, lp);
     goome *g = w->g;
+    LRESULT ir;
+    if (w32i_msg(g, h, msg, wp, lp, &ir)) return ir;
     switch (msg) {
     case WM_NCCALCSIZE:
         if (wp && w->popup) return 0;
@@ -28901,6 +30197,10 @@ static void mac_wscroll(mac_id self, mac_sel cmd, mac_id e)
     gm_push(w->g, &ev);
 }
 
+static int mac_ime_key(mac_win *w, mac_id view, mac_id e);
+static void mac_ime_methods(mac_id c);
+static void mac_ime_gone(mac_win *w);
+
 static void mac_wkeydown(mac_id self, mac_sel cmd, mac_id e)
 {
     mac_win *w = mac_win_of(self);
@@ -28910,7 +30210,7 @@ static void mac_wkeydown(mac_id self, mac_sel cmd, mac_id e)
         mac_wpush(w, GOOME_CLOSE, 0);
         return;
     }
-    mac_key(w->g, e);
+    if (!mac_ime_key(w, self, e)) mac_key(w->g, e);
 }
 
 static void mac_wdraw(mac_id self, mac_sel cmd, mac_rect dirty)
@@ -29024,6 +30324,7 @@ static int mac_wclasses(void)
         mac_method(c, "keyDown:", (void (*)(void))mac_wkeydown, "v@:@");
         mac_method(c, "draggingEntered:", (void (*)(void))mac_wdrag_in, "Q@:@");
         mac_method(c, "performDragOperation:", (void (*)(void))mac_wdrop, MAC_B "@:@");
+        mac_ime_methods(c);
         mac.reg_pair(c);
         mac_appview = c;
     }
@@ -29369,10 +30670,209 @@ static int mac_wcursor(goome *g, int shape)
     return GOOME_OK;
 }
 
+typedef struct {
+    unsigned long loc, len;
+} mac_range;
+#define MAC_RANGE_ENC "{_NSRange=QQ}"
+#define MAC_NOT_FOUND 0x7fffffffffffffffUL
+
+static struct {
+    mac_win *w;
+    int on, in_key, was, cmd, marked;
+    char *stash, *pre;
+    goome_rect caret;
+} macime;
+
+static void mac_ime_gone(mac_win *w)
+{
+    if (macime.w != w) return;
+    free(macime.stash), free(macime.pre);
+    memset(&macime, 0, sizeof(macime));
+}
+
+static mac_id mac_ime_plain(mac_id s)
+{
+    return s && mac_responds(s, "string") && !mac_responds(s, "characterAtIndex:") ? mac_i(s, "string") : s;
+}
+
+static char *mac_ime_dup(const char *t)
+{
+    size_t n = t ? strlen(t) : 0;
+    char *d = malloc(n + 1);
+    if (d) memcpy(d, t ? t : "", n + 1);
+    return d;
+}
+
+static void mac_ime_set_pre(mac_win *w, const char *t, int cur)
+{
+    free(macime.pre);
+    macime.pre = mac_ime_dup(t);
+    macime.marked = t && *t;
+    gm_ime_push(w->g, GOOME_PREEDIT, t ? t : "", -1, cur);
+}
+
+static void mac_ime_insert2(mac_id self, mac_sel cmd, mac_id str, mac_range rep)
+{
+    mac_win *w = mac_win_of(self);
+    if (!w || macime.w != w) return;
+    const char *t = mac_utf8(mac_ime_plain(str));
+    if (macime.in_key && !macime.was && !macime.marked) {
+        free(macime.stash);
+        macime.stash = mac_ime_dup(t);
+    } else if (t && *t)
+        gm_ime_push(w->g, GOOME_TEXT, t, -1, 0);
+    if (macime.marked) mac_ime_set_pre(w, "", 0);
+}
+
+static void mac_ime_insert(mac_id self, mac_sel cmd, mac_id str)
+{
+    mac_range r = {MAC_NOT_FOUND, 0};
+    mac_ime_insert2(self, cmd, str, r);
+}
+
+static void mac_ime_mark(mac_id self, mac_sel cmd, mac_id str, mac_range sel, mac_range rep)
+{
+    mac_win *w = mac_win_of(self);
+    if (!w || macime.w != w) return;
+    mac_id s = mac_ime_plain(str);
+    const char *t = mac_utf8(s);
+    unsigned long n = mac_u(s, "length"), at = sel.loc > n ? n : sel.loc;
+    mac_id head = s ? ((mac_id(*)(mac_id, mac_sel, unsigned long))mac.msg)(s, mac_s("substringToIndex:"), at) : NULL;
+    const char *h = mac_utf8(head);
+    mac_ime_set_pre(w, t, h ? (int)strlen(h) : 0);
+}
+
+static void mac_ime_unmark(mac_id self, mac_sel cmd)
+{
+    mac_win *w = mac_win_of(self);
+    if (!w || macime.w != w || !macime.marked) return;
+    char *t = mac_ime_dup(macime.pre);
+    if (t && *t) gm_ime_push(w->g, GOOME_TEXT, t, -1, 0);
+    free(t);
+    mac_ime_set_pre(w, "", 0);
+}
+
+static mac_bool mac_ime_has(mac_id self, mac_sel cmd) { return (mac_bool)(macime.w && macime.w == mac_win_of(self) && macime.marked); }
+
+static mac_range mac_ime_marked_range(mac_id self, mac_sel cmd)
+{
+    mac_range r = {MAC_NOT_FOUND, 0};
+    if (macime.marked && macime.pre && macime.w == mac_win_of(self)) {
+        mac_id s = mac_str(macime.pre);
+        r.loc = 0, r.len = mac_u(s, "length");
+    }
+    return r;
+}
+
+static mac_range mac_ime_sel_range(mac_id self, mac_sel cmd)
+{
+    mac_range r = {0, 0};
+    return r;
+}
+
+static mac_id mac_ime_attrs(mac_id self, mac_sel cmd) { return mac_i(mac_c("NSArray"), "array"); }
+static mac_id mac_ime_sub(mac_id self, mac_sel cmd, mac_range r, mac_range *actual) { return NULL; }
+static unsigned long mac_ime_index(mac_id self, mac_sel cmd, mac_pt p) { return MAC_NOT_FOUND; }
+static void mac_ime_cmd(mac_id self, mac_sel cmd, mac_sel what) { macime.cmd = 1; }
+
+static mac_rect mac_ime_rect_call(mac_id o, const char *sel, mac_rect a, mac_id b, int two)
+{
+#if defined(__aarch64__) || defined(__arm64__)
+    if (two) return ((mac_rect(*)(mac_id, mac_sel, mac_rect, mac_id))mac.msg)(o, mac_s(sel), a, b);
+    return ((mac_rect(*)(mac_id, mac_sel, mac_rect))mac.msg)(o, mac_s(sel), a);
+#else
+    if (two) return ((mac_rect(*)(mac_id, mac_sel, mac_rect, mac_id))mac.msg_stret)(o, mac_s(sel), a, b);
+    return ((mac_rect(*)(mac_id, mac_sel, mac_rect))mac.msg_stret)(o, mac_s(sel), a);
+#endif
+}
+
+static mac_rect mac_ime_first_rect(mac_id self, mac_sel cmd, mac_range r, mac_range *actual)
+{
+    mac_win *w = mac_win_of(self);
+    mac_rect out = {{0, 0}, {0, 0}};
+    if (actual) *actual = r;
+    if (!w || macime.w != w) return out;
+    goome_rect c = macime.caret;
+    mac_rect v = {{c.x, w->vh - (c.y + c.h)}, {c.w, c.h}};
+    mac_rect in_win = mac_ime_rect_call(self, "convertRect:toView:", v, NULL, 1);
+    return mac_ime_rect_call(w->win, "convertRectToScreen:", in_win, NULL, 0);
+}
+
+static void mac_ime_methods(mac_id c)
+{
+    mac_method(c, "insertText:replacementRange:", (void (*)(void))mac_ime_insert2, "v@:@" MAC_RANGE_ENC);
+    mac_method(c, "insertText:", (void (*)(void))mac_ime_insert, "v@:@");
+    mac_method(c, "setMarkedText:selectedRange:replacementRange:", (void (*)(void))mac_ime_mark, "v@:@" MAC_RANGE_ENC MAC_RANGE_ENC);
+    mac_method(c, "unmarkText", (void (*)(void))mac_ime_unmark, "v@:");
+    mac_method(c, "hasMarkedText", (void (*)(void))mac_ime_has, MAC_B "@:");
+    mac_method(c, "markedRange", (void (*)(void))mac_ime_marked_range, MAC_RANGE_ENC "@:");
+    mac_method(c, "selectedRange", (void (*)(void))mac_ime_sel_range, MAC_RANGE_ENC "@:");
+    mac_method(c, "validAttributesForMarkedText", (void (*)(void))mac_ime_attrs, "@@:");
+    mac_method(c, "attributedSubstringForProposedRange:actualRange:", (void (*)(void))mac_ime_sub, "@@:" MAC_RANGE_ENC "^" MAC_RANGE_ENC);
+    mac_method(c, "characterIndexForPoint:", (void (*)(void))mac_ime_index, "Q@:{CGPoint=dd}");
+    mac_method(c, "firstRectForCharacterRange:actualRange:", (void (*)(void))mac_ime_first_rect, MAC_RECT_ENC "@:" MAC_RANGE_ENC "^" MAC_RANGE_ENC);
+    mac_method(c, "doCommandBySelector:", (void (*)(void))mac_ime_cmd, "v@::");
+    mac_id (*get_proto)(const char *) = NULL;
+    mac_bool (*add_proto)(mac_id, mac_id) = NULL;
+    void *p = dlsym(mac.objc, "objc_getProtocol");
+    memcpy(&get_proto, &p, sizeof(p));
+    p = dlsym(mac.objc, "class_addProtocol");
+    memcpy(&add_proto, &p, sizeof(p));
+    mac_id proto = get_proto ? get_proto("NSTextInputClient") : NULL;
+    if (proto && add_proto) add_proto(c, proto);
+}
+
+static int mac_ime_key(mac_win *w, mac_id view, mac_id e)
+{
+    if (macime.w != w || !macime.on) return 0;
+    mac_id ctx = mac_i(view, "inputContext");
+    if (!ctx) return 0;
+    macime.was = macime.marked, macime.cmd = 0, macime.in_key = 1;
+    free(macime.stash);
+    macime.stash = NULL;
+    int used = ((mac_bool(*)(mac_id, mac_sel, mac_id))mac.msg)(ctx, mac_s("handleEvent:"), e) != 0;
+    macime.in_key = 0;
+    char *st = macime.stash;
+    macime.stash = NULL;
+    int plain = !macime.was && !macime.marked, eaten = 1;
+    if (!used || macime.cmd) eaten = !plain;
+    else if (st) {
+        const char *chars = mac_utf8(mac_i(e, "characters"));
+        if (plain && chars && !strcmp(chars, st)) eaten = 0;
+        else if (*st) gm_ime_push(w->g, GOOME_TEXT, st, -1, 0);
+    }
+    free(st);
+    return eaten;
+}
+
+int gm_ime_macos(goome *g, int on, const goome_rect *caret)
+{
+    mac_win *w = g->ov_priv;
+    if (!w || !w->view) return on ? gm_fail(g, GOOME_ENOTSUP, "the ime only works in window mode on macos") : GOOME_OK;
+    void *pool = mac.pool_push();
+    mac_id ctx = mac_i(w->view, "inputContext");
+    if (macime.w && macime.w != w) {
+        mac_ime_gone(macime.w);
+    }
+    if (!on) {
+        if (macime.w == w && macime.marked) {
+            if (ctx) mac_v(ctx, "discardMarkedText");
+            mac_ime_set_pre(w, "", 0);
+        }
+        macime.on = 0;
+    } else {
+        macime.w = w, macime.on = 1, macime.caret = *caret;
+        if (ctx) mac_v(ctx, "invalidateCharacterCoordinates");
+    }
+    mac.pool_pop(pool);
+    return on && !ctx ? gm_fail(g, GOOME_ENOTSUP, "the view got no input context") : GOOME_OK;
+}
+
 static void mac_wclose(goome *g)
 {
     mac_win *w = g->ov_priv;
     if (!w) return;
+    mac_ime_gone(w);
     void *pool = mac.pool_push();
     if (w->hid) mac_v(mac_c("NSCursor"), "unhide");
     if (w->win) {
