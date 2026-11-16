@@ -90,6 +90,17 @@ void gm_canvas_clear(goome_canvas *c);
 const char *gm_env(const char *name);
 int gm_num(const char **p); // hand rolled, glibc 2.38 redirects the libc ones
 
+#ifndef GOOME_NO_DRAW
+typedef struct {
+    int lo, hi, rtl;
+    double x0, x1;
+} gm_tc;
+int gm_text_rtl(goome_font *f, const char *s, int n);
+int gm_text_layout(goome_font *f, double size, const char *s, int n, gm_tc **out);
+int gm_text_next(const char *s, int i, int n);
+int gm_text_prev(const char *s, int i);
+#endif
+
 const gm_cap *gm_cap_test(void);
 const gm_ov *gm_ov_test(void);
 const gm_ov *gm_ov_offscreen(void);

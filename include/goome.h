@@ -260,6 +260,9 @@ void goome_font_free(goome_font *f);
 double goome_text(goome_canvas *c, goome_font *f, double size, double x, double y, const char *utf8, uint32_t argb); // y = top, NULL font = built in
 double goome_text_measure(goome_font *f, double size, const char *utf8, double *height);
 double goome_text_line_height(goome_font *f, double size);
+void goome_font_fallback(goome_font *f, goome_font *fallback); // tried in order for chars f doesnt have, f doesnt free it. goome_font_system adds the emoji font by itself
+enum { GOOME_DIR_AUTO, GOOME_DIR_LTR, GOOME_DIR_RTL };
+void goome_text_dir(int dir); // paragraph direction for all text, AUTO = from the first strong letter of each line
 #endif
 
 #ifndef GOOME_NO_UI

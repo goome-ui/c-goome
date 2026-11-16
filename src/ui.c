@@ -1824,6 +1824,71 @@ static int ui_u8_next(const char *s, int i, int len)
     return i;
 }
 
+static int ui_bd(goome_ui *u, const char *s, int n) { return u->th.font && n > 0 ? gm_text_rtl(u->th.font, s, n) : 0; }
+
+static double ui_bd_x(const gm_tc *b, int nb, int i)
+{
+    if (nb <= 0) return 0;
+    for (int k = 0; k < nb; k++)
+        if (b[k].lo < i && i <= b[k].hi) return b[k].rtl ? b[k].x0 : b[k].x1;
+    for (int k = 0; k < nb; k++)
+        if (b[k].lo >= i) return b[k].rtl ? b[k].x1 : b[k].x0;
+    return b[nb - 1].rtl ? b[nb - 1].x0 : b[nb - 1].x1;
+}
+
+static int ui_bd_hit(const gm_tc *b, int nb, double x)
+{
+    if (nb <= 0) return 0;
+    int kl = 0, kr = 0;
+    for (int k = 0; k < nb; k++) {
+        if (x >= b[k].x0 && x < b[k].x1) return ((x < (b[k].x0 + b[k].x1) / 2) != (b[k].rtl != 0)) ? b[k].lo : b[k].hi;
+        if (b[k].x0 < b[kl].x0) kl = k;
+        if (b[k].x1 > b[kr].x1) kr = k;
+    }
+    if (x < b[kl].x0) return b[kl].rtl ? b[kl].hi : b[kl].lo;
+    return b[kr].rtl ? b[kr].lo : b[kr].hi;
+}
+
+static int ui_bd_move(const gm_tc *b, int nb, int i, int right)
+{
+    double cx = ui_bd_x(b, nb, i), bx = 0;
+    int best = -1;
+    for (int k = -1; k < nb; k++) {
+        int c = k < 0 ? 0 : b[k].hi;
+        double x = ui_bd_x(b, nb, c);
+        if (right ? x > cx + 0.01 && (best < 0 || x < bx) : x < cx - 0.01 && (best < 0 || x > bx)) best = c, bx = x;
+    }
+    return best;
+}
+
+static int ui_bd_lay(goome_ui *u, const char *s, int n, gm_tc **b) { return gm_text_layout(u->th.font, u->size, s, n, b); }
+
+static void ui_bd_sel(goome_ui *u, const gm_tc *b, int nb, int lo, int hi, double ox, double y, double h, double r, uint32_t col, double extra)
+{
+    double *sp = malloc(sizeof(double) * 2 * (size_t)(nb + 1));
+    int n = 0;
+    if (!sp) return;
+    for (int k = 0; k < nb; k++) {
+        if (b[k].lo < lo || b[k].hi > hi || b[k].x1 <= b[k].x0) continue;
+        int j = n++;
+        while (j > 0 && sp[(j - 1) * 2] > b[k].x0) sp[j * 2] = sp[(j - 1) * 2], sp[j * 2 + 1] = sp[(j - 1) * 2 + 1], j--;
+        sp[j * 2] = b[k].x0, sp[j * 2 + 1] = b[k].x1;
+    }
+    if (extra > 0) {
+        double e = nb ? b[0].x1 : 0;
+        for (int k = 0; k < nb; k++) e = ui_max(e, b[k].x1);
+        sp[n * 2] = e, sp[n * 2 + 1] = e + extra, n++;
+    }
+    for (int k = 0; k < n;) {
+        double a = sp[k * 2], z = sp[k * 2 + 1];
+        int j = k + 1;
+        while (j < n && sp[j * 2] <= z + 0.01) z = ui_max(z, sp[j * 2 + 1]), j++;
+        ui_rect(u, ui_bx(ox + a, y, ui_max(1, z - a), h), r, col);
+        k = j;
+    }
+    free(sp);
+}
+
 static int ui_wrap(goome_ui *u, const char *s, double w, int *st, int *ln, int max)
 {
     int n = 0, len = (int)strlen(s), i = 0;
@@ -2137,8 +2202,36 @@ static double ui_iw(goome_ui *u, const char *buf, int i, const char *disp, int m
     return ui_tw(u, disp, n < (int)strlen(disp) ? n : (int)strlen(disp), 0);
 }
 
+static double ui_cx(goome_ui *u, const char *buf, int len, int i, const char *disp, int ml)
+{
+    if (disp || !ui_bd(u, buf, len)) return ui_iw(u, buf, i, disp, ml);
+    gm_tc *b;
+    int nb = ui_bd_lay(u, buf, len, &b);
+    double x = ui_bd_x(b, nb, i);
+    free(b);
+    return x;
+}
+
+static int ui_ic_step(goome_ui *u, const char *buf, int len, int cur, int right, const char *disp)
+{
+    if (disp) return right ? ui_u8_next(buf, cur, len) : ui_u8_prev(buf, cur);
+    if (ui_bd(u, buf, len)) {
+        gm_tc *b;
+        int nb = ui_bd_lay(u, buf, len, &b), to = ui_bd_move(b, nb, cur, right);
+        free(b);
+        return to < 0 ? cur : to;
+    }
+    return right ? gm_text_next(buf, cur, len) : gm_text_prev(buf, cur);
+}
+
 static int ui_caret_at(goome_ui *u, const char *buf, int len, double want, const char *disp, int ml)
 {
+    if (!disp && ui_bd(u, buf, len)) {
+        gm_tc *b;
+        int nb = ui_bd_lay(u, buf, len, &b), at = ui_bd_hit(b, nb, want);
+        free(b);
+        return at;
+    }
     double best = 1e9;
     int cur = 0;
     for (int i = 0; i <= len; i = ui_u8_next(buf, i, len)) {
@@ -2319,8 +2412,8 @@ int goome_ui_input_ex(goome_ui *u, const char *label, char *buf, int cap, int fl
             } else if (act == GOOME_ACT_WORD_LEFT || act == GOOME_ACT_WORD_RIGHT || (act < 0 && (key == GOOME_K_LEFT || key == GOOME_K_RIGHT))) {
                 int r = act == GOOME_ACT_WORD_RIGHT || (act < 0 && key == GOOME_K_RIGHT), wd = act >= 0;
                 if (has && !sh) cur = r ? hi : lo;
-                else if (r) cur = wd ? (pw ? len : ui_word_right(buf, cur, len)) : ui_u8_next(buf, cur, len);
-                else cur = wd ? (pw ? 0 : ui_word_left(buf, cur)) : ui_u8_prev(buf, cur);
+                else if (r) cur = wd ? (pw ? len : ui_word_right(buf, cur, len)) : ui_ic_step(u, buf, len, cur, 1, dp);
+                else cur = wd ? (pw ? 0 : ui_word_left(buf, cur)) : ui_ic_step(u, buf, len, cur, 0, dp);
                 if (!sh) anc = cur;
                 u->undo_kind = 0;
             } else if (act == GOOME_ACT_DOC_START || act == GOOME_ACT_DOC_END || key == GOOME_K_HOME || key == GOOME_K_UP || key == GOOME_K_END || key == GOOME_K_DOWN) {
@@ -2346,7 +2439,7 @@ int goome_ui_input_ex(goome_ui *u, const char *label, char *buf, int cap, int fl
     int focused = u->focus == id;
     double h = ui_anim(u, s, 0, hov), f = ui_anim_ms(u, s, 1, focused, th->anim_ms);
     if (pw) ui_mask(u, buf, len, disp, (int)sizeof(disp));
-    double cx = ui_iw(u, buf, cur, dp, ml);
+    double cx = ui_cx(u, buf, len, cur, dp, ml);
     if (cx - s->v[2] > iw - 2) s->v[2] = cx - iw + 2;
     if (cx - s->v[2] < 0) s->v[2] = cx;
     if (!focused && s->v[2] > 0 && ui_iw(u, buf, len, dp, ml) <= iw) s->v[2] = 0;
@@ -2359,8 +2452,15 @@ int goome_ui_input_ex(goome_ui *u, const char *label, char *buf, int cap, int fl
     double x = ui_round(tx - s->v[2]);
     if (focused && anc != cur) {
         int lo = anc < cur ? anc : cur, hi = anc < cur ? cur : anc;
-        double x0 = ui_iw(u, buf, lo, dp, ml), x1 = ui_iw(u, buf, hi, dp, ml);
-        ui_rect(u, ui_bx(x + x0, b.y + b.h / 2 - u->lh / 2, x1 - x0, u->lh), 3, ui_c(th->select, ui_fade(th->accent, 0.32)));
+        if (!dp && ui_bd(u, buf, len)) {
+            gm_tc *bx;
+            int nb = ui_bd_lay(u, buf, len, &bx);
+            ui_bd_sel(u, bx, nb, lo, hi, x, b.y + b.h / 2 - u->lh / 2, u->lh, 3, ui_c(th->select, ui_fade(th->accent, 0.32)), 0);
+            free(bx);
+        } else {
+            double x0 = ui_iw(u, buf, lo, dp, ml), x1 = ui_iw(u, buf, hi, dp, ml);
+            ui_rect(u, ui_bx(x + x0, b.y + b.h / 2 - u->lh / 2, x1 - x0, u->lh), 3, ui_c(th->select, ui_fade(th->accent, 0.32)));
+        }
     }
     if (!len && !focused && hint && *hint) ui_text_mid(u, x, b.y + b.h / 2, hint, (int)strlen(hint), 0, th->text_dim);
     else ui_text_mid(u, x, b.y + b.h / 2, dp ? dp : buf, dp ? (int)strlen(dp) : len, 0, th->text);
@@ -3861,8 +3961,14 @@ static int ui_ed_locate(goome_ui *u, ui_ed *e, char *s, int len, int pos, double
 {
     int i = ui_ed_line(e, pos), n = ui_ed_rows_of(u, e, s, i, len), r = 0;
     while (r + 1 < n && e->rb[r + 1] <= pos) r++;
-    int rs = n ? e->rb[r] : e->ls[i];
-    if (x) *x = ui_ew(u, s, rs, pos);
+    int rs = n ? e->rb[r] : e->ls[i], re = r + 1 < n ? e->rb[r + 1] : ui_ed_lend(e, i, len);
+    if (x && ui_bd(u, s + rs, re - rs)) {
+        gm_tc *b;
+        int nb = ui_bd_lay(u, s + rs, re - rs, &b);
+        *x = ui_bd_x(b, nb, pos - rs);
+        free(b);
+    } else if (x)
+        *x = ui_ew(u, s, rs, pos);
     return e->cr[i] + r;
 }
 
@@ -3872,7 +3978,27 @@ static int ui_ed_hit_row(goome_ui *u, ui_ed *e, char *s, int len, int g, double 
     ui_ed_row_span(u, e, s, len, g, &rs, &re, &last, NULL);
     if (!last && re > rs) re = s[re - 1] == ' ' ? re - 1 : ui_u8_prev(s, re);
     if (re < rs) re = rs;
+    if (ui_bd(u, s + rs, re - rs)) {
+        gm_tc *b;
+        int nb = ui_bd_lay(u, s + rs, re - rs, &b), at = ui_bd_hit(b, nb, x);
+        free(b);
+        return rs + at;
+    }
     return ui_ehit(u, s, rs, re, x);
+}
+
+static int ui_ed_step(goome_ui *u, ui_ed *e, char *s, int len, int c, int right)
+{
+    int rs, re, last, line, g = ui_ed_locate(u, e, s, len, c, NULL);
+    ui_ed_row_span(u, e, s, len, g, &rs, &re, &last, &line);
+    int bd = ui_bd(u, s + rs, re - rs);
+    if (!bd) return right ? gm_text_next(s, c, len) : gm_text_prev(s, c);
+    gm_tc *b;
+    int nb = ui_bd_lay(u, s + rs, re - rs, &b), to = ui_bd_move(b, nb, c - rs, right);
+    free(b);
+    if (to >= 0) return rs + to;
+    if (right != (bd == 2)) return re < len && s[re] == '\n' ? re + 1 : re;
+    return rs > 0 && s[rs - 1] == '\n' ? rs - 1 : gm_text_prev(s, rs);
 }
 
 static void ui_ed_record(ui_ed *e, int pos, const char *del, int dn, const char *ins, int in, int c0, int a0, int c1, int kind)
@@ -4242,8 +4368,8 @@ int goome_ui_text_edit(goome_ui *u, const char *id, char *buf, int cap, double h
             } else if (act == GOOME_ACT_WORD_LEFT || act == GOOME_ACT_WORD_RIGHT || (act < 0 && (key == GOOME_K_LEFT || key == GOOME_K_RIGHT))) {
                 int r = act == GOOME_ACT_WORD_RIGHT || (act < 0 && key == GOOME_K_RIGHT), wd = act >= 0;
                 if (has && !sh) c = r ? hi : lo;
-                else if (r) c = wd ? ui_word_right(buf, c, len) : ui_u8_next(buf, c, len);
-                else c = wd ? ui_word_left(buf, c) : ui_u8_prev(buf, c);
+                else if (r) c = wd ? ui_word_right(buf, c, len) : ui_ed_step(u, e, buf, len, c, 1);
+                else c = wd ? ui_word_left(buf, c) : ui_ed_step(u, e, buf, len, c, 0);
             } else if ((key == GOOME_K_UP || key == GOOME_K_DOWN) && cmd && !sh) {
                 e->ty += (key == GOOME_K_UP ? -rh : rh);
                 continue;
@@ -4372,6 +4498,17 @@ int goome_ui_text_edit(goome_ui *u, const char *id, char *buf, int cap, double h
         for (int r = g - e->cr[line]; r < n && g < g1; r++, g++) {
             int rs = e->rb[r], re = r + 1 < n ? e->rb[r + 1] : lend, last = r + 1 >= n;
             double y = oy + g * rh, ty = ui_round(y + (rh - lh) / 2);
+            if (ui_bd(u, buf + rs, re - rs)) {
+                gm_tc *bx;
+                int nb = ui_bd_lay(u, buf + rs, re - rs, &bx), nl = last && lo <= re && hi > re && re < len;
+                if (hi > lo && (hi > rs || nl) && lo <= re) ui_bd_sel(u, bx, nb, lo - rs, hi - rs, ox, y, rh, 2, selc, nl ? spw : 0);
+                free(bx);
+                int z = re;
+                while (z > rs && buf[z - 1] == '\n') z--;
+                if (z > rs) ui_text(u, ox, ty, buf + rs, z - rs, 0, th->text);
+                if (nums && r == 0 && nn < 128) nl_row[nn] = g, nl_line[nn++] = line;
+                continue;
+            }
             if (hi > lo) {
                 int s0 = lo > rs ? lo : rs, s1 = hi < re ? hi : re, nl = last && lo <= re && hi > re && re < len;
                 if (s1 > s0 || nl) {

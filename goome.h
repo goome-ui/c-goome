@@ -266,6 +266,9 @@ void goome_font_free(goome_font *f);
 double goome_text(goome_canvas *c, goome_font *f, double size, double x, double y, const char *utf8, uint32_t argb); // y = top, NULL font = built in
 double goome_text_measure(goome_font *f, double size, const char *utf8, double *height);
 double goome_text_line_height(goome_font *f, double size);
+void goome_font_fallback(goome_font *f, goome_font *fallback); // tried in order for chars f doesnt have, f doesnt free it. goome_font_system adds the emoji font by itself
+enum { GOOME_DIR_AUTO, GOOME_DIR_LTR, GOOME_DIR_RTL };
+void goome_text_dir(int dir); // paragraph direction for all text, AUTO = from the first strong letter of each line
 #endif
 
 #ifndef GOOME_NO_UI
@@ -583,6 +586,17 @@ int gm_canvas_damage(const goome_canvas *c, int *x0, int *y0, int *x1, int *y1);
 void gm_canvas_clear(goome_canvas *c);
 const char *gm_env(const char *name);
 int gm_num(const char **p); // hand rolled, glibc 2.38 redirects the libc ones
+
+#ifndef GOOME_NO_DRAW
+typedef struct {
+    int lo, hi, rtl;
+    double x0, x1;
+} gm_tc;
+int gm_text_rtl(goome_font *f, const char *s, int n);
+int gm_text_layout(goome_font *f, double size, const char *s, int n, gm_tc **out);
+int gm_text_next(const char *s, int i, int n);
+int gm_text_prev(const char *s, int i);
+#endif
 
 const gm_cap *gm_cap_test(void);
 const gm_ov *gm_ov_test(void);
@@ -5992,12 +6006,272 @@ void goome_bitmap_free(goome_bitmap *b)
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef GOOME_UNIDATA_H
+#define GOOME_UNIDATA_H
+#include <stdint.h>
+
+// made by tools/unidata.py from unicode 16.0.0
+enum { UD_L, UD_R, UD_AL, UD_EN, UD_ES, UD_ET, UD_AN, UD_CS, UD_NSM, UD_BN, UD_B, UD_S, UD_WS, UD_ON, UD_LRE, UD_LRO, UD_RLE, UD_RLO, UD_PDF, UD_LRI, UD_RLI, UD_FSI, UD_PDI };
+static const uint32_t ud_bidi[1395] = {
+    0x9,0x12b,0x14a,0x16b,0x18c,0x1aa,0x1c9,0x38a,0x3eb,0x40c,
+    0x42d,0x465,0x4cd,0x564,0x587,0x5a4,0x5c7,0x603,0x747,0x76d,
+    0x820,0xb6d,0xc20,0xf6d,0xfe9,0x10aa,0x10c9,0x1407,0x142d,0x1445,
+    0x14cd,0x1540,0x156d,0x15a9,0x15cd,0x1605,0x1643,0x168d,0x16a0,0x16cd,
+    0x1723,0x1740,0x176d,0x1800,0x1aed,0x1b00,0x1eed,0x1f00,0x572d,0x5760,
+    0x584d,0x5a00,0x5a4d,0x5c00,0x5cad,0x5dc0,0x5ded,0x6008,0x6e00,0x6e8d,
+    0x6ec0,0x6fcd,0x6fe0,0x708d,0x70c0,0x70ed,0x7100,0x7ecd,0x7ee0,0x9068,
+    0x9140,0xb14d,0xb160,0xb1ad,0xb1e5,0xb200,0xb228,0xb7c1,0xb7e8,0xb801,
+    0xb828,0xb861,0xb888,0xb8c1,0xb8e8,0xb900,0xba01,0xbd60,0xbde1,0xbea0,
+    0xc006,0xc0cd,0xc102,0xc125,0xc162,0xc187,0xc1a2,0xc1cd,0xc208,0xc362,
+    0xc968,0xcc06,0xcd45,0xcd66,0xcda2,0xce08,0xce22,0xdac8,0xdba6,0xdbcd,
+    0xdbe8,0xdca2,0xdce8,0xdd2d,0xdd48,0xddc2,0xde03,0xdf42,0xe1c0,0xe1e2,
+    0xe228,0xe242,0xe608,0xe960,0xe9a2,0xf4c8,0xf622,0xf640,0xf801,0xfd68,
+    0xfe81,0xfecd,0xff41,0xff60,0xffa8,0xffc1,0x102c8,0x10341,0x10368,0x10481,
+    0x104a8,0x10501,0x10528,0x105c0,0x10601,0x107e0,0x10801,0x10b28,0x10b80,0x10bc1,
+    0x10be0,0x10c02,0x10d60,0x10e02,0x111e0,0x11206,0x11240,0x112e8,0x11402,0x11948,
+    0x11c46,0x11c68,0x12060,0x12748,0x12760,0x12788,0x127a0,0x12828,0x12920,0x129a8,
+    0x129c0,0x12a28,0x12b00,0x12c48,0x12c80,0x13028,0x13040,0x13788,0x137a0,0x13828,
+    0x138a0,0x139a8,0x139c0,0x13c48,0x13c80,0x13e45,0x13e80,0x13f65,0x13f80,0x13fc8,
+    0x13fe0,0x14028,0x14060,0x14788,0x147a0,0x14828,0x14860,0x148e8,0x14920,0x14968,
+    0x149c0,0x14a28,0x14a40,0x14e08,0x14e40,0x14ea8,0x14ec0,0x15028,0x15060,0x15788,
+    0x157a0,0x15828,0x158c0,0x158e8,0x15920,0x159a8,0x159c0,0x15c48,0x15c80,0x15e25,
+    0x15e40,0x15f48,0x16000,0x16028,0x16040,0x16788,0x167a0,0x167e8,0x16800,0x16828,
+    0x168a0,0x169a8,0x169c0,0x16aa8,0x16ae0,0x16c48,0x16c80,0x17048,0x17060,0x17808,
+    0x17820,0x179a8,0x179c0,0x17e6d,0x17f25,0x17f4d,0x17f60,0x18008,0x18020,0x18088,
+    0x180a0,0x18788,0x187a0,0x187c8,0x18820,0x188c8,0x18920,0x18948,0x189c0,0x18aa8,
+    0x18ae0,0x18c48,0x18c80,0x18f0d,0x18fe0,0x19028,0x19040,0x19788,0x197a0,0x19988,
+    0x199c0,0x19c48,0x19c80,0x1a008,0x1a040,0x1a768,0x1a7a0,0x1a828,0x1a8a0,0x1a9a8,
+    0x1a9c0,0x1ac48,0x1ac80,0x1b028,0x1b040,0x1b948,0x1b960,0x1ba48,0x1baa0,0x1bac8,
+    0x1bae0,0x1c628,0x1c640,0x1c688,0x1c760,0x1c7e5,0x1c800,0x1c8e8,0x1c9e0,0x1d628,
+    0x1d640,0x1d688,0x1d7a0,0x1d908,0x1d9e0,0x1e308,0x1e340,0x1e6a8,0x1e6c0,0x1e6e8,
+    0x1e700,0x1e728,0x1e74d,0x1e7c0,0x1ee28,0x1efe0,0x1f008,0x1f0a0,0x1f0c8,0x1f100,
+    0x1f1a8,0x1f300,0x1f328,0x1f7a0,0x1f8c8,0x1f8e0,0x205a8,0x20620,0x20648,0x20700,
+    0x20728,0x20760,0x207a8,0x207e0,0x20b08,0x20b40,0x20bc8,0x20c20,0x20e28,0x20ea0,
+    0x21048,0x21060,0x210a8,0x210e0,0x211a8,0x211c0,0x213a8,0x213c0,0x26ba8,0x26c00,
+    0x2720d,0x27340,0x2800d,0x28020,0x2d00c,0x2d020,0x2d36d,0x2d3a0,0x2e248,0x2e2a0,
+    0x2e648,0x2e680,0x2ea48,0x2ea80,0x2ee48,0x2ee80,0x2f688,0x2f6c0,0x2f6e8,0x2f7c0,
+    0x2f8c8,0x2f8e0,0x2f928,0x2fa80,0x2fb65,0x2fb80,0x2fba8,0x2fbc0,0x2fe0d,0x2ff40,
+    0x3000d,0x30168,0x301c9,0x301e8,0x30200,0x310a8,0x310e0,0x31528,0x31540,0x32408,
+    0x32460,0x324e8,0x32520,0x32648,0x32660,0x32728,0x32780,0x3280d,0x32820,0x3288d,
+    0x328c0,0x33bcd,0x34000,0x342e8,0x34320,0x34368,0x34380,0x34ac8,0x34ae0,0x34b08,
+    0x34be0,0x34c08,0x34c20,0x34c48,0x34c60,0x34ca8,0x34da0,0x34e68,0x34fa0,0x34fe8,
+    0x35000,0x35608,0x359e0,0x36008,0x36080,0x36688,0x366a0,0x366c8,0x36760,0x36788,
+    0x367a0,0x36848,0x36860,0x36d68,0x36e80,0x37008,0x37040,0x37448,0x374c0,0x37508,
+    0x37540,0x37568,0x375c0,0x37cc8,0x37ce0,0x37d08,0x37d40,0x37da8,0x37dc0,0x37de8,
+    0x37e40,0x38588,0x38680,0x386c8,0x38700,0x39a08,0x39a60,0x39a88,0x39c20,0x39c48,
+    0x39d20,0x39da8,0x39dc0,0x39e88,0x39ea0,0x39f08,0x39f40,0x3b808,0x3c000,0x3f7ad,
+    0x3f7c0,0x3f7ed,0x3f840,0x3f9ad,0x3fa00,0x3fbad,0x3fc00,0x3fdad,0x3fe00,0x3ffad,
+    0x3ffe0,0x4000c,0x40169,0x401c0,0x401e1,0x4020d,0x4050c,0x4052a,0x4054e,0x40570,
+    0x40592,0x405af,0x405d1,0x405e7,0x40605,0x406ad,0x40887,0x408ad,0x40bec,0x40c09,
+    0x40ca0,0x40cd3,0x40cf4,0x40d15,0x40d36,0x40d49,0x40e03,0x40e20,0x40e83,0x40f44,
+    0x40f8d,0x40fe0,0x41003,0x41144,0x4118d,0x411e0,0x41405,0x41820,0x41a08,0x41e20,
+    0x4200d,0x42040,0x4206d,0x420e0,0x4210d,0x42140,0x4228d,0x422a0,0x422cd,0x42320,
+    0x423cd,0x42480,0x424ad,0x424c0,0x424ed,0x42500,0x4252d,0x42540,0x425c5,0x425e0,
+    0x4274d,0x42780,0x4280d,0x428a0,0x4294d,0x429c0,0x42a0d,0x42c00,0x4312d,0x43180,
+    0x4320d,0x44244,0x44265,0x4428d,0x466c0,0x46f6d,0x472a0,0x472cd,0x48540,0x4880d,
+    0x48960,0x48c0d,0x49103,0x49380,0x49d4d,0x4d580,0x4d5ad,0x50000,0x5200d,0x56e80,
+    0x56ecd,0x572c0,0x572ed,0x58000,0x59cad,0x59d60,0x59de8,0x59e40,0x59f2d,0x5a000,
+    0x5afe8,0x5b000,0x5bc08,0x5c00d,0x5cbc0,0x5d00d,0x5d340,0x5d36d,0x5de80,0x5e00d,
+    0x5fac0,0x5fe0d,0x6000c,0x6002d,0x600a0,0x6010d,0x60420,0x60548,0x605c0,0x6060d,
+    0x60620,0x606cd,0x60700,0x607ad,0x60800,0x61328,0x6136d,0x613a0,0x6140d,0x61420,
+    0x61f6d,0x61f80,0x6380d,0x63cc0,0x63ded,0x63e00,0x643ad,0x643e0,0x64a0d,0x64c00,
+    0x64f8d,0x64fe0,0x6562d,0x65800,0x6598d,0x65a00,0x66eed,0x66f60,0x67bcd,0x67c00,
+    0x67fed,0x68000,0x9b80d,0x9c000,0x14920d,0x1498e0,0x14c1ad,0x14c200,0x14cde8,0x14ce6d,
+    0x14ce88,0x14cfcd,0x14d000,0x14d3c8,0x14d400,0x14de08,0x14de40,0x14e00d,0x14e440,0x14f10d,
+    0x14f120,0x150048,0x150060,0x1500c8,0x1500e0,0x150168,0x150180,0x1504a8,0x1504e0,0x15050d,
+    0x150588,0x1505a0,0x150705,0x150740,0x150e8d,0x150f00,0x151888,0x1518c0,0x151c08,0x151e40,
+    0x151fe8,0x152000,0x1524c8,0x1525c0,0x1528e8,0x152a40,0x153008,0x153060,0x153668,0x153680,
+    0x1536c8,0x153740,0x153788,0x1537c0,0x153ca8,0x153cc0,0x154528,0x1545e0,0x154628,0x154660,
+    0x1546a8,0x1546e0,0x154868,0x154880,0x154988,0x1549a0,0x154f88,0x154fa0,0x155608,0x155620,
+    0x155648,0x1556a0,0x1556e8,0x155720,0x1557c8,0x155800,0x155828,0x155840,0x155d88,0x155dc0,
+    0x155ec8,0x155ee0,0x156d4d,0x156d80,0x157ca8,0x157cc0,0x157d08,0x157d20,0x157da8,0x157dc0,
+    0x1f63a1,0x1f63c8,0x1f63e1,0x1f6524,0x1f6541,0x1f66e0,0x1f6701,0x1f67a0,0x1f67c1,0x1f67e0,
+    0x1f6801,0x1f6840,0x1f6861,0x1f68a0,0x1f68c1,0x1f6a02,0x1f7860,0x1f7a62,0x1fa7cd,0x1faa02,
+    0x1fb200,0x1fb242,0x1fb900,0x1fb9ed,0x1fba00,0x1fbe02,0x1fbfad,0x1fc008,0x1fc20d,0x1fc340,
+    0x1fc408,0x1fc60d,0x1fca07,0x1fca2d,0x1fca47,0x1fca60,0x1fca8d,0x1fcaa7,0x1fcacd,0x1fcbe5,
+    0x1fcc0d,0x1fcc44,0x1fcc8d,0x1fcce0,0x1fcd0d,0x1fcd25,0x1fcd6d,0x1fcd80,0x1fce02,0x1fcea0,
+    0x1fcec2,0x1fdfa0,0x1fdfe9,0x1fe000,0x1fe02d,0x1fe065,0x1fe0cd,0x1fe164,0x1fe187,0x1fe1a4,
+    0x1fe1c7,0x1fe203,0x1fe347,0x1fe36d,0x1fe420,0x1fe76d,0x1fe820,0x1feb6d,0x1fecc0,0x1ffc05,
+    0x1ffc4d,0x1ffca5,0x1ffce0,0x1ffd0d,0x1ffde0,0x1fff2d,0x1fffc0,0x20202d,0x202040,0x20280d,
+    0x2031a0,0x20320d,0x2033a0,0x20340d,0x203420,0x203fa8,0x203fc0,0x205c08,0x205c23,0x205f80,
+    0x206ec8,0x206f60,0x210001,0x2100c0,0x210101,0x210120,0x210141,0x2106c0,0x2106e1,0x210720,
+    0x210781,0x2107a0,0x2107e1,0x210ac0,0x210ae1,0x2113e0,0x2114e1,0x211600,0x211c01,0x211e60,
+    0x211e81,0x211ec0,0x211f61,0x212380,0x2123ed,0x212401,0x212740,0x2127e1,0x212800,0x213001,
+    0x213700,0x213781,0x213a00,0x213a41,0x214028,0x214080,0x2140a8,0x2140e0,0x214188,0x214201,
+    0x214280,0x2142a1,0x214300,0x214321,0x2146c0,0x214708,0x214760,0x2147e8,0x214801,0x214920,
+    0x214a01,0x214b20,0x214c01,0x215400,0x215801,0x215ca8,0x215ce0,0x215d61,0x215ee0,0x216001,
+    0x2166c0,0x21672d,0x216801,0x216ac0,0x216b01,0x216e60,0x216f01,0x217240,0x217321,0x2173a0,
+    0x217521,0x217600,0x218001,0x218920,0x219001,0x219660,0x219801,0x219e60,0x219f41,0x21a002,
+    0x21a488,0x21a500,0x21a606,0x21a740,0x21a806,0x21a941,0x21acc0,0x21ad28,0x21adcd,0x21ade1,
+    0x21b0c0,0x21b1c1,0x21b200,0x21cc06,0x21cfe0,0x21d001,0x21d540,0x21d568,0x21d5a1,0x21d5c0,
+    0x21d601,0x21d640,0x21d842,0x21d8a0,0x21df88,0x21e001,0x21e500,0x21e602,0x21e8c8,0x21ea22,
+    0x21eb40,0x21ee01,0x21f048,0x21f0c1,0x21f140,0x21f601,0x21f980,0x21fc01,0x21fee0,0x220028,
+    0x220040,0x220708,0x2208e0,0x220a4d,0x220cc0,0x220e08,0x220e20,0x220e68,0x220ea0,0x220fe8,
+    0x221040,0x221668,0x2216e0,0x221728,0x221760,0x221848,0x221860,0x222008,0x222060,0x2224e8,
+    0x222580,0x2225a8,0x2226a0,0x222e68,0x222e80,0x223008,0x223040,0x2236c8,0x2237e0,0x223928,
+    0x2239a0,0x2239e8,0x223a00,0x2245e8,0x224640,0x224688,0x2246a0,0x2246c8,0x224700,0x2247c8,
+    0x2247e0,0x224828,0x224840,0x225be8,0x225c00,0x225c68,0x225d60,0x226008,0x226040,0x226768,
+    0x2267a0,0x226808,0x226820,0x226cc8,0x226da0,0x226e08,0x226ea0,0x227768,0x227820,0x2279c8,
+    0x2279e0,0x227a08,0x227a20,0x227a48,0x227a60,0x227c28,0x227c60,0x228708,0x228800,0x228848,
+    0x2288a0,0x2288c8,0x2288e0,0x228bc8,0x228be0,0x229668,0x229720,0x229748,0x229760,0x2297e8,
+    0x229820,0x229848,0x229880,0x22b648,0x22b6c0,0x22b788,0x22b7c0,0x22b7e8,0x22b820,0x22bb88,
+    0x22bbc0,0x22c668,0x22c760,0x22c7a8,0x22c7c0,0x22c7e8,0x22c820,0x22cc0d,0x22cda0,0x22d568,
+    0x22d580,0x22d5a8,0x22d5c0,0x22d608,0x22d6c0,0x22d6e8,0x22d700,0x22e3a8,0x22e3c0,0x22e3e8,
+    0x22e400,0x22e448,0x22e4c0,0x22e4e8,0x22e580,0x2305e8,0x230700,0x230728,0x230760,0x232768,
+    0x2327a0,0x2327c8,0x2327e0,0x232868,0x232880,0x233a88,0x233b00,0x233b48,0x233b80,0x233c08,
+    0x233c20,0x234028,0x2340e0,0x234128,0x234160,0x234668,0x234720,0x234768,0x2347e0,0x2348e8,
+    0x234900,0x234a28,0x234ae0,0x234b28,0x234b80,0x235148,0x2352e0,0x235308,0x235340,0x238608,
+    0x2386e0,0x238708,0x2387c0,0x239248,0x239500,0x239548,0x239620,0x239648,0x239680,0x2396a8,
+    0x2396e0,0x23a628,0x23a6e0,0x23a748,0x23a760,0x23a788,0x23a7c0,0x23a7e8,0x23a8c0,0x23a8e8,
+    0x23a900,0x23b208,0x23b240,0x23b2a8,0x23b2c0,0x23b2e8,0x23b300,0x23de68,0x23dea0,0x23e008,
+    0x23e040,0x23e6c8,0x23e760,0x23e808,0x23e820,0x23e848,0x23e860,0x23eb48,0x23eb60,0x23faad,
+    0x23fba5,0x23fc2d,0x23fe40,0x268808,0x268820,0x2688e8,0x268ac0,0x2c23c8,0x2c2540,0x2c25a8,
+    0x2c2600,0x2d5e08,0x2d5ea0,0x2d6608,0x2d66e0,0x2de9e8,0x2dea00,0x2df1e8,0x2df260,0x2dfc4d,
+    0x2dfc60,0x2dfc88,0x2dfca0,0x3793a8,0x3793e0,0x379409,0x379480,0x39800d,0x399ac0,0x399e03,
+    0x399f40,0x39a00d,0x39d680,0x39e008,0x39e5c0,0x39e608,0x39e8e0,0x3a2ce8,0x3a2d40,0x3a2e69,
+    0x3a2f68,0x3a3060,0x3a30a8,0x3a3180,0x3a3548,0x3a35c0,0x3a3d2d,0x3a3d60,0x3a400d,0x3a4848,
+    0x3a48ad,0x3a48c0,0x3a600d,0x3a6ae0,0x3ad82d,0x3ad840,0x3adb6d,0x3adb80,0x3adf6d,0x3adf80,
+    0x3ae2ad,0x3ae2c0,0x3ae6ad,0x3ae6c0,0x3ae9ed,0x3aea00,0x3aeded,0x3aee00,0x3af12d,0x3af140,
+    0x3af52d,0x3af540,0x3af86d,0x3af880,0x3af9c3,0x3b0000,0x3b4008,0x3b46e0,0x3b4768,0x3b4da0,
+    0x3b4ea8,0x3b4ec0,0x3b5088,0x3b50a0,0x3b5368,0x3b5400,0x3b5428,0x3b5600,0x3c0008,0x3c00e0,
+    0x3c0108,0x3c0320,0x3c0368,0x3c0440,0x3c0468,0x3c04a0,0x3c04c8,0x3c0560,0x3c11e8,0x3c1200,
+    0x3c2608,0x3c26e0,0x3c55c8,0x3c55e0,0x3c5d88,0x3c5e00,0x3c5fe5,0x3c6000,0x3c9d88,0x3c9e00,
+    0x3cbdc8,0x3cbe00,0x3d0001,0x3d18a0,0x3d18e1,0x3d1a08,0x3d1ae0,0x3d2001,0x3d2888,0x3d2961,
+    0x3d2980,0x3d2a01,0x3d2b40,0x3d2bc1,0x3d2c00,0x3d8e22,0x3d96a0,0x3da022,0x3da7c0,0x3dc002,
+    0x3dc080,0x3dc0a2,0x3dc400,0x3dc422,0x3dc460,0x3dc482,0x3dc4a0,0x3dc4e2,0x3dc500,0x3dc522,
+    0x3dc660,0x3dc682,0x3dc700,0x3dc722,0x3dc740,0x3dc762,0x3dc780,0x3dc842,0x3dc860,0x3dc8e2,
+    0x3dc900,0x3dc922,0x3dc940,0x3dc962,0x3dc980,0x3dc9a2,0x3dca00,0x3dca22,0x3dca60,0x3dca82,
+    0x3dcaa0,0x3dcae2,0x3dcb00,0x3dcb22,0x3dcb40,0x3dcb62,0x3dcb80,0x3dcba2,0x3dcbc0,0x3dcbe2,
+    0x3dcc00,0x3dcc22,0x3dcc60,0x3dcc82,0x3dcca0,0x3dcce2,0x3dcd60,0x3dcd82,0x3dce60,0x3dce82,
+    0x3dcf00,0x3dcf22,0x3dcfa0,0x3dcfc2,0x3dcfe0,0x3dd002,0x3dd140,0x3dd162,0x3dd380,0x3dd422,
+    0x3dd480,0x3dd4a2,0x3dd540,0x3dd562,0x3dd780,0x3dde0d,0x3dde40,0x3e000d,0x3e0580,0x3e060d,
+    0x3e1280,0x3e140d,0x3e15e0,0x3e162d,0x3e1800,0x3e182d,0x3e1a00,0x3e1a2d,0x3e1ec0,0x3e2003,
+    0x3e216d,0x3e2200,0x3e25ed,0x3e2600,0x3e2d4d,0x3e2e00,0x3e35ad,0x3e35c0,0x3e4c0d,0x3e4cc0,
+    0x3e600d,0x3edb00,0x3edb8d,0x3edda0,0x3ede0d,0x3edfa0,0x3ee00d,0x3eeee0,0x3eef6d,0x3efb40,
+    0x3efc0d,0x3efd80,0x3efe0d,0x3efe20,0x3f000d,0x3f0180,0x3f020d,0x3f0900,0x3f0a0d,0x3f0b40,
+    0x3f0c0d,0x3f1100,0x3f120d,0x3f15c0,0x3f160d,0x3f1780,0x3f180d,0x3f1840,0x3f200d,0x3f4a80,
+    0x3f4c0d,0x3f4dc0,0x3f4e0d,0x3f4fa0,0x3f500d,0x3f5140,0x3f51ed,0x3f58e0,0x3f59cd,0x3f5ba0,
+    0x3f5bed,0x3f5d40,0x3f5e0d,0x3f5f20,0x3f600d,0x3f7260,0x3f728d,0x3f7e03,0x3f7f40,0x1c00029,
+    0x1c00040,0x1c00409,0x1c01000,0x1c02008,0x1c03e00,
+};
+static const uint32_t ud_mirror[648] = {
+    0x28,0x29,0x29,0x28,0x3c,0x3e,0x3e,0x3c,0x5b,0x5d,0x5d,0x5b,
+    0x7b,0x7d,0x7d,0x7b,0xab,0xbb,0xbb,0xab,0x2039,0x203a,0x203a,0x2039,
+    0x2045,0x2046,0x2046,0x2045,0x207d,0x207e,0x207e,0x207d,0x208d,0x208e,0x208e,0x208d,
+    0x2208,0x220b,0x220a,0x220d,0x220b,0x2208,0x220d,0x220a,0x2264,0x2265,0x2265,0x2264,
+    0x2266,0x2267,0x2267,0x2266,0x2268,0x2269,0x2269,0x2268,0x226a,0x226b,0x226b,0x226a,
+    0x226e,0x226f,0x226f,0x226e,0x2270,0x2271,0x2271,0x2270,0x2272,0x2273,0x2273,0x2272,
+    0x2274,0x2275,0x2275,0x2274,0x2276,0x2277,0x2277,0x2276,0x2278,0x2279,0x2279,0x2278,
+    0x227a,0x227b,0x227b,0x227a,0x227c,0x227d,0x227d,0x227c,0x227e,0x227f,0x227f,0x227e,
+    0x2282,0x2283,0x2283,0x2282,0x2284,0x2285,0x2285,0x2284,0x2286,0x2287,0x2287,0x2286,
+    0x2288,0x2289,0x2289,0x2288,0x228a,0x228b,0x228b,0x228a,0x22a2,0x22a3,0x22a3,0x22a2,
+    0x22ab,0x2ae5,0x22b0,0x22b1,0x22b1,0x22b0,0x22c9,0x22ca,0x22ca,0x22c9,0x22cb,0x22cc,
+    0x22cc,0x22cb,0x22d0,0x22d1,0x22d1,0x22d0,0x22d6,0x22d7,0x22d7,0x22d6,0x22d8,0x22d9,
+    0x22d9,0x22d8,0x22da,0x22db,0x22db,0x22da,0x22dc,0x22dd,0x22dd,0x22dc,0x22de,0x22df,
+    0x22df,0x22de,0x22e6,0x22e7,0x22e7,0x22e6,0x22e8,0x22e9,0x22e9,0x22e8,0x2308,0x2309,
+    0x2309,0x2308,0x230a,0x230b,0x230b,0x230a,0x2329,0x232a,0x232a,0x2329,0x2768,0x2769,
+    0x2769,0x2768,0x276a,0x276b,0x276b,0x276a,0x276c,0x276d,0x276d,0x276c,0x276e,0x276f,
+    0x276f,0x276e,0x2770,0x2771,0x2771,0x2770,0x2772,0x2773,0x2773,0x2772,0x2774,0x2775,
+    0x2775,0x2774,0x27c3,0x27c4,0x27c4,0x27c3,0x27c5,0x27c6,0x27c6,0x27c5,0x27d5,0x27d6,
+    0x27d6,0x27d5,0x27dd,0x27de,0x27de,0x27dd,0x27e2,0x27e3,0x27e3,0x27e2,0x27e4,0x27e5,
+    0x27e5,0x27e4,0x27e6,0x27e7,0x27e7,0x27e6,0x27e8,0x27e9,0x27e9,0x27e8,0x27ea,0x27eb,
+    0x27eb,0x27ea,0x27ec,0x27ed,0x27ed,0x27ec,0x27ee,0x27ef,0x27ef,0x27ee,0x2983,0x2984,
+    0x2984,0x2983,0x2985,0x2986,0x2986,0x2985,0x2987,0x2988,0x2988,0x2987,0x2989,0x298a,
+    0x298a,0x2989,0x298b,0x298c,0x298c,0x298b,0x298d,0x2990,0x298e,0x298f,0x298f,0x298e,
+    0x2990,0x298d,0x2991,0x2992,0x2992,0x2991,0x2997,0x2998,0x2998,0x2997,0x29a8,0x29a9,
+    0x29a9,0x29a8,0x29aa,0x29ab,0x29ab,0x29aa,0x29ac,0x29ad,0x29ad,0x29ac,0x29ae,0x29af,
+    0x29af,0x29ae,0x29c0,0x29c1,0x29c1,0x29c0,0x29d1,0x29d2,0x29d2,0x29d1,0x29d4,0x29d5,
+    0x29d5,0x29d4,0x29d8,0x29d9,0x29d9,0x29d8,0x29da,0x29db,0x29db,0x29da,0x29e8,0x29e9,
+    0x29e9,0x29e8,0x29fc,0x29fd,0x29fd,0x29fc,0x2a2d,0x2a2e,0x2a2e,0x2a2d,0x2a34,0x2a35,
+    0x2a35,0x2a34,0x2a79,0x2a7a,0x2a7a,0x2a79,0x2a7b,0x2a7c,0x2a7c,0x2a7b,0x2a7d,0x2a7e,
+    0x2a7e,0x2a7d,0x2a7f,0x2a80,0x2a80,0x2a7f,0x2a81,0x2a82,0x2a82,0x2a81,0x2a85,0x2a86,
+    0x2a86,0x2a85,0x2a87,0x2a88,0x2a88,0x2a87,0x2a89,0x2a8a,0x2a8a,0x2a89,0x2a8b,0x2a8c,
+    0x2a8c,0x2a8b,0x2a8d,0x2a8e,0x2a8e,0x2a8d,0x2a8f,0x2a90,0x2a90,0x2a8f,0x2a91,0x2a92,
+    0x2a92,0x2a91,0x2a93,0x2a94,0x2a94,0x2a93,0x2a95,0x2a96,0x2a96,0x2a95,0x2a97,0x2a98,
+    0x2a98,0x2a97,0x2a99,0x2a9a,0x2a9a,0x2a99,0x2a9b,0x2a9c,0x2a9c,0x2a9b,0x2a9d,0x2a9e,
+    0x2a9e,0x2a9d,0x2a9f,0x2aa0,0x2aa0,0x2a9f,0x2aa1,0x2aa2,0x2aa2,0x2aa1,0x2aa6,0x2aa7,
+    0x2aa7,0x2aa6,0x2aa8,0x2aa9,0x2aa9,0x2aa8,0x2aaf,0x2ab0,0x2ab0,0x2aaf,0x2ab1,0x2ab2,
+    0x2ab2,0x2ab1,0x2ab3,0x2ab4,0x2ab4,0x2ab3,0x2ab5,0x2ab6,0x2ab6,0x2ab5,0x2ab7,0x2ab8,
+    0x2ab8,0x2ab7,0x2ab9,0x2aba,0x2aba,0x2ab9,0x2abb,0x2abc,0x2abc,0x2abb,0x2abd,0x2abe,
+    0x2abe,0x2abd,0x2abf,0x2ac0,0x2ac0,0x2abf,0x2ac1,0x2ac2,0x2ac2,0x2ac1,0x2ac3,0x2ac4,
+    0x2ac4,0x2ac3,0x2ac5,0x2ac6,0x2ac6,0x2ac5,0x2ac7,0x2ac8,0x2ac8,0x2ac7,0x2ac9,0x2aca,
+    0x2aca,0x2ac9,0x2acb,0x2acc,0x2acc,0x2acb,0x2acd,0x2ace,0x2ace,0x2acd,0x2acf,0x2ad0,
+    0x2ad0,0x2acf,0x2ad1,0x2ad2,0x2ad2,0x2ad1,0x2ad3,0x2ad4,0x2ad4,0x2ad3,0x2ad5,0x2ad6,
+    0x2ad6,0x2ad5,0x2ae5,0x22ab,0x2af7,0x2af8,0x2af8,0x2af7,0x2af9,0x2afa,0x2afa,0x2af9,
+    0x2e02,0x2e03,0x2e03,0x2e02,0x2e04,0x2e05,0x2e05,0x2e04,0x2e09,0x2e0a,0x2e0a,0x2e09,
+    0x2e0c,0x2e0d,0x2e0d,0x2e0c,0x2e1c,0x2e1d,0x2e1d,0x2e1c,0x2e20,0x2e21,0x2e21,0x2e20,
+    0x2e22,0x2e23,0x2e23,0x2e22,0x2e24,0x2e25,0x2e25,0x2e24,0x2e26,0x2e27,0x2e27,0x2e26,
+    0x2e28,0x2e29,0x2e29,0x2e28,0x2e55,0x2e56,0x2e56,0x2e55,0x2e57,0x2e58,0x2e58,0x2e57,
+    0x2e59,0x2e5a,0x2e5a,0x2e59,0x2e5b,0x2e5c,0x2e5c,0x2e5b,0x3008,0x3009,0x3009,0x3008,
+    0x300a,0x300b,0x300b,0x300a,0x300c,0x300d,0x300d,0x300c,0x300e,0x300f,0x300f,0x300e,
+    0x3010,0x3011,0x3011,0x3010,0x3014,0x3015,0x3015,0x3014,0x3016,0x3017,0x3017,0x3016,
+    0x3018,0x3019,0x3019,0x3018,0x301a,0x301b,0x301b,0x301a,0xfe59,0xfe5a,0xfe5a,0xfe59,
+    0xfe5b,0xfe5c,0xfe5c,0xfe5b,0xfe5d,0xfe5e,0xfe5e,0xfe5d,0xfe64,0xfe65,0xfe65,0xfe64,
+    0xff08,0xff09,0xff09,0xff08,0xff1c,0xff1e,0xff1e,0xff1c,0xff3b,0xff3d,0xff3d,0xff3b,
+    0xff5b,0xff5d,0xff5d,0xff5b,0xff5f,0xff60,0xff60,0xff5f,0xff62,0xff63,0xff63,0xff62,
+};
+static const uint16_t ud_forms[380] = {
+    0x621,0xfe80,0x0,0x0,0x0,0x622,0xfe81,0xfe82,0x0,0x0,
+    0x623,0xfe83,0xfe84,0x0,0x0,0x624,0xfe85,0xfe86,0x0,0x0,
+    0x625,0xfe87,0xfe88,0x0,0x0,0x626,0xfe89,0xfe8a,0xfe8b,0xfe8c,
+    0x627,0xfe8d,0xfe8e,0x0,0x0,0x628,0xfe8f,0xfe90,0xfe91,0xfe92,
+    0x629,0xfe93,0xfe94,0x0,0x0,0x62a,0xfe95,0xfe96,0xfe97,0xfe98,
+    0x62b,0xfe99,0xfe9a,0xfe9b,0xfe9c,0x62c,0xfe9d,0xfe9e,0xfe9f,0xfea0,
+    0x62d,0xfea1,0xfea2,0xfea3,0xfea4,0x62e,0xfea5,0xfea6,0xfea7,0xfea8,
+    0x62f,0xfea9,0xfeaa,0x0,0x0,0x630,0xfeab,0xfeac,0x0,0x0,
+    0x631,0xfead,0xfeae,0x0,0x0,0x632,0xfeaf,0xfeb0,0x0,0x0,
+    0x633,0xfeb1,0xfeb2,0xfeb3,0xfeb4,0x634,0xfeb5,0xfeb6,0xfeb7,0xfeb8,
+    0x635,0xfeb9,0xfeba,0xfebb,0xfebc,0x636,0xfebd,0xfebe,0xfebf,0xfec0,
+    0x637,0xfec1,0xfec2,0xfec3,0xfec4,0x638,0xfec5,0xfec6,0xfec7,0xfec8,
+    0x639,0xfec9,0xfeca,0xfecb,0xfecc,0x63a,0xfecd,0xfece,0xfecf,0xfed0,
+    0x641,0xfed1,0xfed2,0xfed3,0xfed4,0x642,0xfed5,0xfed6,0xfed7,0xfed8,
+    0x643,0xfed9,0xfeda,0xfedb,0xfedc,0x644,0xfedd,0xfede,0xfedf,0xfee0,
+    0x645,0xfee1,0xfee2,0xfee3,0xfee4,0x646,0xfee5,0xfee6,0xfee7,0xfee8,
+    0x647,0xfee9,0xfeea,0xfeeb,0xfeec,0x648,0xfeed,0xfeee,0x0,0x0,
+    0x649,0xfeef,0xfef0,0xfbe8,0xfbe9,0x64a,0xfef1,0xfef2,0xfef3,0xfef4,
+    0x671,0xfb50,0xfb51,0x0,0x0,0x677,0xfbdd,0x0,0x0,0x0,
+    0x679,0xfb66,0xfb67,0xfb68,0xfb69,0x67a,0xfb5e,0xfb5f,0xfb60,0xfb61,
+    0x67b,0xfb52,0xfb53,0xfb54,0xfb55,0x67e,0xfb56,0xfb57,0xfb58,0xfb59,
+    0x67f,0xfb62,0xfb63,0xfb64,0xfb65,0x680,0xfb5a,0xfb5b,0xfb5c,0xfb5d,
+    0x683,0xfb76,0xfb77,0xfb78,0xfb79,0x684,0xfb72,0xfb73,0xfb74,0xfb75,
+    0x686,0xfb7a,0xfb7b,0xfb7c,0xfb7d,0x687,0xfb7e,0xfb7f,0xfb80,0xfb81,
+    0x688,0xfb88,0xfb89,0x0,0x0,0x68c,0xfb84,0xfb85,0x0,0x0,
+    0x68d,0xfb82,0xfb83,0x0,0x0,0x68e,0xfb86,0xfb87,0x0,0x0,
+    0x691,0xfb8c,0xfb8d,0x0,0x0,0x698,0xfb8a,0xfb8b,0x0,0x0,
+    0x6a4,0xfb6a,0xfb6b,0xfb6c,0xfb6d,0x6a6,0xfb6e,0xfb6f,0xfb70,0xfb71,
+    0x6a9,0xfb8e,0xfb8f,0xfb90,0xfb91,0x6ad,0xfbd3,0xfbd4,0xfbd5,0xfbd6,
+    0x6af,0xfb92,0xfb93,0xfb94,0xfb95,0x6b1,0xfb9a,0xfb9b,0xfb9c,0xfb9d,
+    0x6b3,0xfb96,0xfb97,0xfb98,0xfb99,0x6ba,0xfb9e,0xfb9f,0x0,0x0,
+    0x6bb,0xfba0,0xfba1,0xfba2,0xfba3,0x6be,0xfbaa,0xfbab,0xfbac,0xfbad,
+    0x6c0,0xfba4,0xfba5,0x0,0x0,0x6c1,0xfba6,0xfba7,0xfba8,0xfba9,
+    0x6c5,0xfbe0,0xfbe1,0x0,0x0,0x6c6,0xfbd9,0xfbda,0x0,0x0,
+    0x6c7,0xfbd7,0xfbd8,0x0,0x0,0x6c8,0xfbdb,0xfbdc,0x0,0x0,
+    0x6c9,0xfbe2,0xfbe3,0x0,0x0,0x6cb,0xfbde,0xfbdf,0x0,0x0,
+    0x6cc,0xfbfc,0xfbfd,0xfbfe,0xfbff,0x6d0,0xfbe4,0xfbe5,0xfbe6,0xfbe7,
+    0x6d2,0xfbae,0xfbaf,0x0,0x0,0x6d3,0xfbb0,0xfbb1,0x0,0x0,
+};
+static const uint16_t ud_lamalef[12] = {
+    0x622,0xfef5,0xfef6,0x623,0xfef7,0xfef8,0x625,0xfef9,0xfefa,0x627,0xfefb,0xfefc,
+};
+static const uint16_t ud_emoji[66] = {
+    0x231a,0x231b,0x23e9,0x23ec,0x23f0,0x23f0,0x23f3,0x23f3,0x25fd,0x25fe,0x2614,0x2615,
+    0x2648,0x2653,0x267f,0x267f,0x2693,0x2693,0x26a1,0x26a1,0x26aa,0x26ab,0x26bd,0x26be,
+    0x26c4,0x26c5,0x26ce,0x26ce,0x26d4,0x26d4,0x26ea,0x26ea,0x26f2,0x26f3,0x26f5,0x26f5,
+    0x26fa,0x26fa,0x26fd,0x26fd,0x2705,0x2705,0x270a,0x270b,0x2728,0x2728,0x274c,0x274c,
+    0x274e,0x274e,0x2753,0x2755,0x2757,0x2757,0x2795,0x2797,0x27b0,0x27b0,0x27bf,0x27bf,
+    0x2b1b,0x2b1c,0x2b50,0x2b50,0x2b55,0x2b55,
+};
+#endif
 
 #if defined(_WIN32)
 #include <io.h>
 #include <wchar.h>
 #elif defined(__unix__) || defined(__APPLE__)
 #include <dirent.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #if !defined(__APPLE__)
 #include <dlfcn.h>
 #endif
@@ -6017,6 +6291,11 @@ void goome_bitmap_free(goome_bitmap *b)
 #define FT_ARENA (4u << 20)
 #define FT_SLOTS 8192
 #define FT_KC 2048
+#define FT_MAXMAP (1u << 30)
+#define FT_NFB 8
+#define FT_CC 512
+#define FT_NLIG 256
+#define FT_REG 16
 
 typedef struct {
     int32_t x, y;
@@ -6032,6 +6311,18 @@ typedef struct {
 typedef struct {
     uint32_t start, count, osz, data;
 } ft_idx;
+
+typedef struct {
+    uint32_t g, px64, argb;
+    int16_t w, h, l, t;
+    uint32_t *px;
+} ft_cent;
+
+typedef struct {
+    int g, lo, hi;
+    int64_t adv;
+    uint8_t fi, rtl, kind;
+} ft_gl;
 
 struct goome_font {
     const uint8_t *d;
@@ -6070,6 +6361,23 @@ struct goome_font {
     int rw, rh;
     uint32_t col;
     uint32_t tab[256];
+    void *map;
+    size_t maplen;
+    int shared, color;
+    goome_font *fb[FT_NFB];
+    int nfb;
+    uint32_t colr, cpal, cblc, cbdt, sbix, uvs;
+    uint32_t lig[FT_NLIG];
+    int nlig;
+    ft_cent *cc;
+    int ncc;
+    size_t ccb;
+    uint32_t *scp, *ssh;
+    int *soff, *scs, *sord;
+    uint8_t *scl, *swk, *slv;
+    int scap;
+    ft_gl *sgl;
+    int sglcap;
 };
 
 static uint8_t ft_gamma[256];
@@ -6125,6 +6433,7 @@ static int ft_cmap_find(goome_font *f, uint32_t cmap)
     for (uint32_t i = 0; i < nt && i < 512; i++) {
         uint32_t r = cmap + 4 + i * 8, o = cmap + ft_u32(f, r + 4);
         int s = ft_cmap_score((int)ft_u16(f, r), (int)ft_u16(f, r + 2), (int)ft_u16(f, o));
+        if (ft_u16(f, r) == 0 && ft_u16(f, r + 2) == 5 && ft_u16(f, o) == 14) f->uvs = o;
         if (s > best) best = s, f->cmoff = o, f->cmfmt = (int)ft_u16(f, o), f->sym = s == 2;
     }
     return best;
@@ -7112,9 +7421,44 @@ static int ft_kern(goome_font *f, int a, int b)
     return v;
 }
 
+static int ft_tag_is(uint32_t t, const char *const *tags)
+{
+    for (; *tags; tags++)
+        if (t == ((uint32_t)(unsigned char)(*tags)[0] << 24 | (uint32_t)(unsigned char)(*tags)[1] << 16 | (uint32_t)(unsigned char)(*tags)[2] << 8 | (uint32_t)(unsigned char)(*tags)[3])) return 1;
+    return 0;
+}
+
+static void ft_gsub_init(goome_font *f, uint32_t g)
+{
+    static const char *const tags[] = {"ccmp", "liga", "rlig", "clig", NULL};
+    if (!g || !ft_has(f, g, 10)) return;
+    uint32_t fl = g + ft_u16(f, g + 6), ll = g + ft_u16(f, g + 8), nf = ft_u16(f, fl), nl = ft_u16(f, ll);
+    uint8_t *use = calloc(nl + 1, 1);
+    if (!use) return;
+    for (uint32_t i = 0; i < nf; i++) {
+        uint32_t r = fl + 2 + i * 6;
+        if (!ft_tag_is(ft_u32(f, r), tags)) continue;
+        uint32_t ft = fl + ft_u16(f, r + 4), n = ft_u16(f, ft + 2);
+        for (uint32_t k = 0; k < n; k++) {
+            uint32_t li = ft_u16(f, ft + 4 + k * 2);
+            if (li < nl) use[li] = 1;
+        }
+    }
+    for (uint32_t i = 0; i < nl && f->nlig < FT_NLIG; i++) {
+        if (!use[i]) continue;
+        uint32_t lk = ll + ft_u16(f, ll + 2 + i * 2), type = ft_u16(f, lk), ns = ft_u16(f, lk + 4);
+        for (uint32_t k = 0; k < ns && f->nlig < FT_NLIG; k++) {
+            uint32_t st = lk + ft_u16(f, lk + 6 + k * 2), ty = type;
+            if (ty == 7 && ft_u16(f, st) == 1) ty = ft_u16(f, st + 2), st += ft_u32(f, st + 4);
+            if (ty == 4 && ft_u16(f, st) == 1 && ft_has(f, st, 6)) f->lig[f->nlig++] = st;
+        }
+    }
+    free(use);
+}
+
 static int ft_parse(goome_font *f, int index)
 {
-    if (f->n < 12 || f->n > FT_MAXFILE) return 0;
+    if (f->n < 12 || f->n > (f->map ? FT_MAXMAP : FT_MAXFILE)) return 0;
     uint32_t dir = 0, tag = ft_u32(f, 0);
     if (tag == 0x74746366u) {
         uint32_t nf = ft_u32(f, 8);
@@ -7138,8 +7482,9 @@ static int ft_parse(goome_font *f, int index)
     f->loca = ft_table(f, dir, "loca", &f->loca_n);
     if (!f->glyf || !f->loca) {
         cff = ft_table(f, dir, "CFF ", &cfflen);
-        if (!cff || !ft_cff_init(f, cff, cfflen)) return 0;
-        f->cff = 1;
+        if (cff && ft_cff_init(f, cff, cfflen)) f->cff = 1;
+        else if (!ft_table(f, dir, "CBDT", NULL) && !ft_table(f, dir, "sbix", NULL)) return 0;
+        else f->glyf = f->loca = f->glyf_n = f->loca_n = 0;
     }
     if (!ft_cmap_find(f, cmap)) return 0;
     for (int i = 0; i < 256; i++) {
@@ -7171,17 +7516,25 @@ static int ft_parse(goome_font *f, int index)
     f->kern = ft_table(f, dir, "kern", NULL);
     f->gpos = ft_table(f, dir, "GPOS", NULL);
     ft_kern_init(f);
+    ft_gsub_init(f, ft_table(f, dir, "GSUB", NULL));
+    f->colr = ft_table(f, dir, "COLR", NULL), f->cpal = ft_table(f, dir, "CPAL", NULL);
+    f->cblc = ft_table(f, dir, "CBLC", NULL), f->cbdt = ft_table(f, dir, "CBDT", NULL);
+    f->sbix = ft_table(f, dir, "sbix", NULL);
+    if (!f->colr || !f->cpal || !ft_has(f, f->colr, 14) || !ft_has(f, f->cpal, 14)) f->colr = 0;
+    if (!f->cblc || !f->cbdt || !ft_has(f, f->cblc, 8)) f->cblc = 0;
+    if (!f->sbix || !ft_has(f, f->sbix, 8)) f->sbix = 0;
+    f->color = f->colr || f->cblc || f->sbix;
     return 1;
 }
 
-static goome_font *ft_new(const uint8_t *d, size_t n, uint8_t *own, int index)
+static goome_font *ft_new(const uint8_t *d, size_t n, uint8_t *own, int index, void *map)
 {
     goome_font *f = calloc(1, sizeof(*f));
     if (!f) {
         free(own);
         return NULL;
     }
-    f->d = d, f->n = n, f->own = own;
+    f->d = d, f->n = n, f->own = own, f->map = map, f->maplen = map ? n : 0;
     if (!ft_parse(f, index)) {
         goome_font_free(f);
         return NULL;
@@ -7244,7 +7597,7 @@ goome_font *goome_font_load_index(const char *path, int index)
         free(d);
         return NULL;
     }
-    return ft_new(d, n, d, index);
+    return ft_new(d, n, d, index, NULL);
 }
 
 goome_font *goome_font_load(const char *path) { return goome_font_load_index(path, 0); }
@@ -7252,19 +7605,83 @@ goome_font *goome_font_load(const char *path) { return goome_font_load_index(pat
 goome_font *goome_font_load_mem(const void *data, size_t n, int copy)
 {
     if (!data || n < 12 || n > FT_MAXFILE) return NULL;
-    if (!copy) return ft_new(data, n, NULL, 0);
+    if (!copy) return ft_new(data, n, NULL, 0, NULL);
     uint8_t *d = malloc(n);
     if (!d) return NULL;
     memcpy(d, data, n);
-    return ft_new(d, n, d, 0);
+    return ft_new(d, n, d, 0, NULL);
+}
+
+static void ft_cc_clear(goome_font *f)
+{
+    for (int i = 0; f->cc && i < FT_CC; i++) free(f->cc[i].px), f->cc[i].px = NULL, f->cc[i].px64 = 0;
+    f->ncc = 0, f->ccb = 0;
 }
 
 void goome_font_free(goome_font *f)
 {
-    if (!f) return;
+    if (!f || f->shared) return;
+    ft_cc_clear(f);
+    free(f->cc);
+#if !defined(_WIN32) && (defined(__unix__) || defined(__APPLE__))
+    if (f->map) munmap(f->map, f->maplen);
+#endif
     free(f->own), free(f->ksub), free(f->ents), free(f->slots), free(f->arena);
     free(f->pts), free(f->ends), free(f->cover), free(f->area), free(f->tmp);
+    free(f->scp), free(f->ssh), free(f->soff), free(f->scs), free(f->sord), free(f->scl), free(f->swk), free(f->slv), free(f->sgl);
     free(f);
+}
+
+static goome_font *ft_map_load(const char *path, int index)
+{
+#if !defined(_WIN32) && (defined(__unix__) || defined(__APPLE__))
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return NULL;
+    struct stat st;
+    if (fstat(fd, &st) || st.st_size < 12 || (uint64_t)st.st_size > FT_MAXMAP) {
+        close(fd);
+        return NULL;
+    }
+    size_t n = (size_t)st.st_size;
+    void *m = mmap(NULL, n, PROT_READ, MAP_PRIVATE, fd, 0);
+    close(fd);
+    if (m == MAP_FAILED) return NULL;
+    goome_font *f = ft_new(m, n, NULL, index, m);
+    if (!f) munmap(m, n);
+    return f;
+#else
+    return goome_font_load_index(path, index);
+#endif
+}
+
+static struct {
+    char path[512];
+    int index;
+    goome_font *f;
+} ft_reg[FT_REG];
+static int ft_nreg;
+
+static goome_font *ft_shared(const char *path, int index)
+{
+    if (!path || strlen(path) >= sizeof(ft_reg[0].path)) return NULL;
+    for (int i = 0; i < ft_nreg; i++)
+        if (ft_reg[i].index == index && !strcmp(ft_reg[i].path, path)) return ft_reg[i].f;
+    if (ft_nreg >= FT_REG) return NULL;
+    goome_font *f = ft_map_load(path, index);
+    if (!f && index) f = ft_map_load(path, 0);
+    strcpy(ft_reg[ft_nreg].path, path);
+    ft_reg[ft_nreg].index = index, ft_reg[ft_nreg].f = f;
+    ft_nreg++;
+    if (f) f->shared = 1;
+    return f;
+}
+
+void goome_font_fallback(goome_font *f, goome_font *fallback)
+{
+    if (!f || !fallback || f == fallback || f->nfb >= FT_NFB) return;
+    for (int i = 0; i < f->nfb; i++)
+        if (f->fb[i] == fallback) return;
+    f->fb[f->nfb++] = fallback;
 }
 
 static int ft_norm(const char *s, char *out, int max)
@@ -7401,7 +7818,7 @@ static goome_font *ft_hunt_for(const char *want)
 }
 
 #if defined(__unix__) && !defined(__APPLE__)
-static goome_font *ft_fontconfig(const char *name)
+static int ft_fc_file(const char *name, char *out, size_t cap, int *index)
 {
     static void *lib;
     static void *cfg;
@@ -7416,7 +7833,7 @@ static goome_font *ft_fontconfig(const char *name)
     if (!tried) {
         tried = 1;
         lib = dlopen("libfontconfig.so.1", RTLD_NOW | RTLD_LOCAL);
-        if (!lib) return NULL;
+        if (!lib) return 0;
         void *(*init)(void) = NULL;
         *(void **)&init = dlsym(lib, "FcInitLoadConfigAndFonts");
         *(void **)&parse = dlsym(lib, "FcNameParse");
@@ -7428,28 +7845,91 @@ static goome_font *ft_fontconfig(const char *name)
         *(void **)&destroy = dlsym(lib, "FcPatternDestroy");
         if (init && parse && subst && defs && match && gets && geti && destroy) cfg = init();
     }
-    if (!cfg) return NULL;
+    if (!cfg) return 0;
     void *pat = parse((const unsigned char *)name);
-    if (!pat) return NULL;
+    if (!pat) return 0;
     subst(cfg, pat, 0);
     defs(pat);
-    int res = 0, idx = 0;
+    int res = 0, idx = 0, ok = 0;
     void *m = match(cfg, pat, &res);
     destroy(pat);
-    if (!m) return NULL;
+    if (!m) return 0;
     unsigned char *file = NULL;
-    goome_font *f = NULL;
-    if (gets(m, "file", 0, &file) == 0 && file) {
+    if (gets(m, "file", 0, &file) == 0 && file && strlen((const char *)file) < cap) {
         if (geti(m, "index", 0, &idx) != 0) idx = 0;
-        f = goome_font_load_index((const char *)file, idx & 0xFFFF);
-        if (!f && idx) f = goome_font_load((const char *)file);
+        strcpy(out, (const char *)file);
+        *index = idx & 0xFFFF, ok = 1;
     }
     destroy(m);
+    return ok;
+}
+
+static goome_font *ft_fontconfig(const char *name)
+{
+    char path[1024];
+    int idx = 0;
+    if (!ft_fc_file(name, path, sizeof(path), &idx)) return NULL;
+    goome_font *f = goome_font_load_index(path, idx);
+    if (!f && idx) f = goome_font_load(path);
     return f;
 }
 #endif
 
-goome_font *goome_font_system(const char *name)
+static goome_font *ft_find_shared(const char *const *fc, const char *const *paths, uint32_t cp, int color)
+{
+    goome_font *f;
+#if defined(__unix__) && !defined(__APPLE__)
+    for (int i = 0; fc && fc[i]; i++) {
+        char path[1024];
+        int idx = 0;
+        if (!ft_fc_file(fc[i], path, sizeof(path), &idx)) continue;
+        f = ft_shared(path, idx);
+        if (f && ft_cmap(f, cp) && (!color || f->color)) return f;
+    }
+#else
+    (void)fc;
+#endif
+    for (int i = 0; paths && paths[i]; i++) {
+        char path[600];
+#if defined(_WIN32)
+        const char *win = getenv("WINDIR");
+        snprintf(path, sizeof(path), "%s\\Fonts\\%s", win ? win : "C:\\Windows", paths[i]);
+#else
+        snprintf(path, sizeof(path), "%s", paths[i]);
+#endif
+        f = ft_shared(path, 0);
+        if (f && ft_cmap(f, cp) && (!color || f->color)) return f;
+    }
+    return NULL;
+}
+
+static goome_font *ft_auto(goome_font *f)
+{
+#if defined(_WIN32)
+    static const char *const emo[] = {"seguiemj.ttf", NULL}, *const ar[] = {"segoeui.ttf", "arial.ttf", "tahoma.ttf", NULL}, *const he[] = {"segoeui.ttf", "arial.ttf", NULL};
+#elif defined(__APPLE__)
+    static const char *const emo[] = {"/System/Library/Fonts/Apple Color Emoji.ttc", NULL};
+    static const char *const ar[] = {"/System/Library/Fonts/GeezaPro.ttc", "/System/Library/Fonts/Supplemental/GeezaPro.ttc", "/System/Library/Fonts/Supplemental/Arial Unicode.ttf", NULL};
+    static const char *const he[] = {"/System/Library/Fonts/ArialHB.ttc", "/System/Library/Fonts/Supplemental/Arial Unicode.ttf", NULL};
+#else
+    static const char *const emo[] = {"/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf", "/usr/share/fonts/noto/NotoColorEmoji.ttf", "/usr/share/fonts/google-noto-emoji/NotoColorEmoji.ttf",
+                                      "/usr/share/fonts/noto-emoji/NotoColorEmoji.ttf", "/usr/share/fonts/TTF/NotoColorEmoji.ttf", NULL};
+    static const char *const ar[] = {"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/TTF/DejaVuSans.ttf", NULL}, *const he[] = {"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/TTF/DejaVuSans.ttf", NULL};
+#endif
+    static const char *const fc_emo[] = {"emoji", "Noto Color Emoji", NULL}, *const fc_ar[] = {":lang=ar", NULL}, *const fc_he[] = {":lang=he", NULL};
+    if (!f) return NULL;
+    goome_font *e;
+    if (!f->color && (e = ft_find_shared(fc_emo, emo, 0x1F600, 1))) goome_font_fallback(f, e);
+    if (!ft_cmap(f, 0x627) && (e = ft_find_shared(fc_ar, ar, 0x627, 0))) goome_font_fallback(f, e);
+    if (!ft_cmap(f, 0x5D0) && (e = ft_find_shared(fc_he, he, 0x5D0, 0))) goome_font_fallback(f, e);
+    return f;
+}
+
+static goome_font *ft_system(const char *name);
+
+goome_font *goome_font_system(const char *name) { return ft_auto(ft_system(name)); }
+
+static goome_font *ft_system(const char *name)
 {
     goome_font *f = NULL;
     if (name && (strchr(name, '/') || strchr(name, '\\'))) return goome_font_load(name);
@@ -7478,35 +7958,6 @@ goome_font *goome_font_system(const char *name)
     for (int i = 0; names[i]; i++)
         if ((f = ft_hunt_for(names[i]))) return f;
     return NULL;
-}
-
-static uint32_t ft_utf8(const char **ps)
-{
-    const unsigned char *s = (const unsigned char *)*ps;
-    uint32_t c = s[0];
-    int n = 0;
-    uint32_t min = 0;
-    if (c < 0x80) {
-        *ps += 1;
-        return c;
-    }
-    if (c >= 0xC2 && c <= 0xDF) n = 1, c &= 31, min = 0x80;
-    else if (c >= 0xE0 && c <= 0xEF) n = 2, c &= 15, min = 0x800;
-    else if (c >= 0xF0 && c <= 0xF4) n = 3, c &= 7, min = 0x10000;
-    else {
-        *ps += 1;
-        return 0xFFFD;
-    }
-    for (int i = 1; i <= n; i++) {
-        if ((s[i] & 0xC0) != 0x80) {
-            *ps += i;
-            return 0xFFFD;
-        }
-        c = c << 6 | (s[i] & 63);
-    }
-    *ps += n + 1;
-    if (c < min || c > 0x10FFFF || (c >= 0xD800 && c <= 0xDFFF)) return 0xFFFD;
-    return c;
 }
 
 static inline void ft_mark(goome_canvas *c, int x0, int y0, int x1, int y1)
@@ -7552,8 +8003,948 @@ static void ft_blit(goome_canvas *c, goome_font *f, const uint8_t *bits, int w, 
     }
 }
 
+
 static double ft_round(double v) { return (double)(int64_t)(v < 0 ? v - 0.5 : v + 0.5); }
 static int ft_okd(double v) { return v == v && v < 1e9 && v > -1e9; }
+
+static void ft_cblit(goome_canvas *c, const uint32_t *px, int w, int h, int x, int y, const int *k, uint32_t a)
+{
+    int x0 = x > k[0] ? x : k[0], y0 = y > k[1] ? y : k[1], x1 = x + w < k[2] ? x + w : k[2], y1 = y + h < k[3] ? y + h : k[3];
+    if (x1 <= x0 || y1 <= y0) return;
+    ft_mark(c, x0, y0, x1, y1);
+    for (int yy = y0; yy < y1; yy++) {
+        const uint32_t *s = px + (size_t)(yy - y) * w + (x0 - x);
+        uint32_t *d = c->px + (size_t)yy * c->stride + x0;
+        for (int xx = x0; xx < x1; xx++, s++, d++) {
+            uint32_t src = *s;
+            if (!src) continue;
+            if (a < 255) {
+                uint32_t rb = (src & 0xFF00FF) * a + 0x800080, ag = (src >> 8 & 0xFF00FF) * a + 0x800080;
+                src = ((rb + (rb >> 8 & 0xFF00FF)) >> 8 & 0xFF00FF) | ((ag + (ag >> 8 & 0xFF00FF)) & 0xFF00FF00);
+            }
+            uint32_t v = *d, inv = 255 - (src >> 24);
+            uint32_t rb = (v & 0xFF00FF) * inv + 0x800080, ag = (v >> 8 & 0xFF00FF) * inv + 0x800080;
+            rb = (rb + (rb >> 8 & 0xFF00FF)) >> 8 & 0xFF00FF;
+            ag = (ag + (ag >> 8 & 0xFF00FF)) & 0xFF00FF00;
+            *d = src + rb + ag;
+        }
+    }
+}
+
+static void ft_scale(const uint32_t *s, int sw, int sh, int ss, uint32_t *d, int dw, int dh)
+{
+    if (dw <= sw && dh <= sh) {
+        for (int y = 0; y < dh; y++) {
+            int64_t ya = (int64_t)y * sh * 256 / dh, yb = (int64_t)(y + 1) * sh * 256 / dh;
+            for (int x = 0; x < dw; x++) {
+                int64_t xa = (int64_t)x * sw * 256 / dw, xb = (int64_t)(x + 1) * sw * 256 / dw;
+                uint64_t acc[4] = {0, 0, 0, 0}, ws = 0;
+                for (int64_t sy = ya >> 8; sy * 256 < yb && sy < sh; sy++) {
+                    int64_t wy = (yb < (sy + 1) * 256 ? yb : (sy + 1) * 256) - (ya > sy * 256 ? ya : sy * 256);
+                    for (int64_t sx = xa >> 8; sx * 256 < xb && sx < sw; sx++) {
+                        int64_t wx = (xb < (sx + 1) * 256 ? xb : (sx + 1) * 256) - (xa > sx * 256 ? xa : sx * 256);
+                        uint64_t wt = (uint64_t)(wx * wy);
+                        uint32_t p = s[(size_t)sy * ss + (size_t)sx];
+                        for (int q = 0; q < 4; q++) acc[q] += (uint64_t)(p >> (q * 8) & 255) * wt;
+                        ws += wt;
+                    }
+                }
+                uint32_t o = 0;
+                for (int q = 0; q < 4 && ws; q++) o |= (uint32_t)((acc[q] + ws / 2) / ws) << (q * 8);
+                d[(size_t)y * dw + x] = o;
+            }
+        }
+        return;
+    }
+    for (int y = 0; y < dh; y++) {
+        int64_t v = ((int64_t)(2 * y + 1) * sh * 65536 / (2 * dh)) - 32768;
+        if (v < 0) v = 0;
+        if (v > (int64_t)(sh - 1) << 16) v = (int64_t)(sh - 1) << 16;
+        int y0 = (int)(v >> 16), y1 = y0 + 1 < sh ? y0 + 1 : y0;
+        uint32_t fy = (uint32_t)(v >> 8 & 255);
+        for (int x = 0; x < dw; x++) {
+            int64_t h = ((int64_t)(2 * x + 1) * sw * 65536 / (2 * dw)) - 32768;
+            if (h < 0) h = 0;
+            if (h > (int64_t)(sw - 1) << 16) h = (int64_t)(sw - 1) << 16;
+            int x0 = (int)(h >> 16), x1 = x0 + 1 < sw ? x0 + 1 : x0;
+            uint32_t fx = (uint32_t)(h >> 8 & 255);
+            uint32_t a = s[(size_t)y0 * ss + x0], b = s[(size_t)y0 * ss + x1], c = s[(size_t)y1 * ss + x0], e = s[(size_t)y1 * ss + x1], o = 0;
+            for (int q = 0; q < 32; q += 8) {
+                uint32_t t = ((a >> q & 255) * (256 - fx) + (b >> q & 255) * fx) * (256 - fy) + ((c >> q & 255) * (256 - fx) + (e >> q & 255) * fx) * fy;
+                o |= ((t + 32768) >> 16) << q;
+            }
+            d[(size_t)y * dw + x] = o;
+        }
+    }
+}
+
+static int ft_png_ok(const goome_font *f, uint32_t at, uint32_t len)
+{
+    if (len < 33 || !ft_has(f, at, len) || memcmp(f->d + at, "\x89PNG\r\n\x1a\n", 8)) return 0;
+    uint32_t w = ft_u32(f, at + 16), h = ft_u32(f, at + 20);
+    return w >= 1 && h >= 1 && w <= 1024 && h <= 1024;
+}
+
+static int ft_cblc_glyph(const goome_font *f, uint32_t sz, int g, uint32_t *at, uint32_t *len, int *fmt, int *mw, int *mh, int *bx, int *by)
+{
+    uint32_t arr = f->cblc + ft_u32(f, sz), n = ft_u32(f, sz + 8);
+    if ((uint32_t)g < ft_u16(f, sz + 40) || (uint32_t)g > ft_u16(f, sz + 42)) return 0;
+    for (uint32_t i = 0; i < n && i < 4096; i++) {
+        uint32_t r = arr + i * 8, first = ft_u16(f, r), last = ft_u16(f, r + 2);
+        if ((uint32_t)g < first || (uint32_t)g > last) continue;
+        uint32_t st = arr + ft_u32(f, r + 4), ifmt = ft_u16(f, st), base = f->cbdt + ft_u32(f, st + 4), k = (uint32_t)g - first, a = 0, b = 0;
+        *fmt = (int)ft_u16(f, st + 2);
+        uint32_t big = 0;
+        if (ifmt == 1) a = ft_u32(f, st + 8 + k * 4), b = ft_u32(f, st + 12 + k * 4);
+        else if (ifmt == 3) a = ft_u16(f, st + 8 + k * 2), b = ft_u16(f, st + 10 + k * 2);
+        else if (ifmt == 2) {
+            uint32_t isz = ft_u32(f, st + 8);
+            a = isz * k, b = a + isz, big = st + 12;
+            if (isz && k > 0xFFFFFFFFu / isz - 1) return 0;
+        } else if (ifmt == 4) {
+            uint32_t ng = ft_u32(f, st + 8);
+            for (uint32_t j = 0; j < ng && j < 65536; j++) {
+                uint32_t e = st + 12 + j * 4;
+                if (ft_u16(f, e) == (uint32_t)g) {
+                    a = ft_u16(f, e + 2), b = ft_u16(f, e + 6);
+                    break;
+                }
+            }
+        } else if (ifmt == 5) {
+            uint32_t isz = ft_u32(f, st + 8), ng = ft_u32(f, st + 20);
+            big = st + 12;
+            for (uint32_t j = 0; j < ng && j < 65536; j++)
+                if (ft_u16(f, st + 24 + j * 2) == (uint32_t)g) {
+                    if (isz && j > 0xFFFFFFFFu / isz - 1) return 0;
+                    a = isz * j, b = a + isz;
+                    break;
+                }
+        } else
+            return 0;
+        if (b <= a || base + a < base) return 0;
+        uint32_t p = base + a, e = b - a;
+        if (*fmt == 17) {
+            *mh = (int)ft_u8(f, p), *mw = (int)ft_u8(f, p + 1), *bx = (int)(ft_u8(f, p + 2) ^ 0x80) - 0x80, *by = (int)(ft_u8(f, p + 3) ^ 0x80) - 0x80;
+            *len = ft_u32(f, p + 5), *at = p + 9;
+            if (e < 9 || *len > e - 9) return 0;
+        } else if (*fmt == 18) {
+            *mh = (int)ft_u8(f, p), *mw = (int)ft_u8(f, p + 1), *bx = (int)(ft_u8(f, p + 2) ^ 0x80) - 0x80, *by = (int)(ft_u8(f, p + 3) ^ 0x80) - 0x80;
+            *len = ft_u32(f, p + 8), *at = p + 12;
+            if (e < 12 || *len > e - 12) return 0;
+        } else if (*fmt == 19 && big) {
+            *mh = (int)ft_u8(f, big), *mw = (int)ft_u8(f, big + 1), *bx = (int)(ft_u8(f, big + 2) ^ 0x80) - 0x80, *by = (int)(ft_u8(f, big + 3) ^ 0x80) - 0x80;
+            *len = ft_u32(f, p), *at = p + 4;
+            if (e < 4 || *len > e - 4) return 0;
+        } else
+            return 0;
+        return ft_png_ok(f, *at, *len);
+    }
+    return 0;
+}
+
+static int ft_better(int ppem, int best, int want)
+{
+    if (best <= 0) return 1;
+    if (ppem >= want) return best < want || ppem < best;
+    return best < want && ppem > best;
+}
+
+static int ft_bitmap_find(const goome_font *f, int g, int want, uint32_t *at, uint32_t *len, int *ppem, int *bx, int *by)
+{
+    int best = 0;
+    if (f->cblc) {
+        uint32_t ns = ft_u32(f, f->cblc + 4);
+        for (uint32_t i = 0; i < ns && i < 64; i++) {
+            uint32_t sz = f->cblc + 8 + i * 48;
+            int pp = (int)ft_u8(f, sz + 45), fmt, mw, mh, x, y;
+            uint32_t a, l;
+            if (pp < 1 || !ft_better(pp, best, want) || !ft_cblc_glyph(f, sz, g, &a, &l, &fmt, &mw, &mh, &x, &y)) continue;
+            best = pp, *at = a, *len = l, *bx = x, *by = y;
+        }
+    }
+    if (f->sbix && !best) {
+        uint32_t ns = ft_u32(f, f->sbix + 4);
+        for (uint32_t i = 0; i < ns && i < 64; i++) {
+            uint32_t st = f->sbix + ft_u32(f, f->sbix + 8 + i * 4);
+            int pp = (int)ft_u16(f, st), gg = g;
+            if (pp < 1 || !ft_better(pp, best, want)) continue;
+            for (int hop = 0; hop < 2; hop++) {
+                uint32_t a = ft_u32(f, st + 4 + (uint32_t)gg * 4), b = ft_u32(f, st + 8 + (uint32_t)gg * 4);
+                if ((uint32_t)gg >= (uint32_t)f->nglyphs || b <= a + 8 || st + a < st) break;
+                uint32_t p = st + a, tag = ft_u32(f, p + 4);
+                if (tag == 0x64757065u && hop == 0) {
+                    gg = (int)ft_u16(f, p + 8);
+                    continue;
+                }
+                if (tag != 0x706E6720u || !ft_png_ok(f, p + 8, b - a - 8)) break;
+                int h = (int)ft_u32(f, p + 8 + 20);
+                best = pp, *at = p + 8, *len = b - a - 8, *bx = ft_s16(f, p), *by = ft_s16(f, p + 2) + h;
+                break;
+            }
+        }
+    }
+    *ppem = best;
+    return best > 0;
+}
+
+static int64_t ft_sc(int64_t v, int px64, int ppem) { return ft_divr(v * px64, (int64_t)ppem * 64); }
+
+static int ft_bitmap_glyph(goome_font *f, int g, int px64, ft_cent *e)
+{
+    uint32_t at, len;
+    int pp, bx, by;
+    if (!ft_bitmap_find(f, g, (px64 + 63) / 64, &at, &len, &pp, &bx, &by)) return 0;
+    goome_bitmap bm;
+    if (goome_bitmap_load_mem(f->d + at, len, &bm) != GOOME_OK) return 0;
+    int64_t w = ft_sc(bm.w, px64, pp), h = ft_sc(bm.h, px64, pp);
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+    int ok = 0;
+    if (w <= FT_MAXDIM && h <= FT_MAXDIM && w * h <= 1048576) {
+        e->px = malloc((size_t)(w * h) * 4);
+        if (e->px) {
+            ft_scale(bm.px, bm.w, bm.h, bm.stride, e->px, (int)w, (int)h);
+            e->w = (int16_t)w, e->h = (int16_t)h, e->l = (int16_t)ft_sc(bx, px64, pp), e->t = (int16_t)-ft_sc(by, px64, pp);
+            ok = 1;
+        }
+    }
+    goome_bitmap_free(&bm);
+    return ok;
+}
+
+static uint32_t ft_pal(const goome_font *f, uint32_t idx, uint32_t argb)
+{
+    uint32_t p = f->cpal;
+    if (idx == 0xFFFF || idx >= ft_u16(f, p + 2)) return argb | 0xFF000000u;
+    uint32_t r = p + ft_u32(f, p + 8) + (ft_u16(f, p + 12) + idx) * 4;
+    if (!ft_has(f, r, 4)) return argb | 0xFF000000u;
+    return ft_u8(f, r + 3) << 24 | ft_u8(f, r + 2) << 16 | ft_u8(f, r + 1) << 8 | ft_u8(f, r);
+}
+
+static int ft_colr_layers(const goome_font *f, int g, uint32_t *first, uint32_t *num)
+{
+    uint32_t o = f->colr, nb = ft_u16(f, o + 2), bo = o + ft_u32(f, o + 4), lo = 0, hi = nb;
+    while (lo < hi) {
+        uint32_t m = (lo + hi) / 2, r = bo + m * 6, v = ft_u16(f, r);
+        if (v == (uint32_t)g) {
+            *first = ft_u16(f, r + 2), *num = ft_u16(f, r + 4);
+            if (*num > 256) *num = 256;
+            return *num > 0 && ft_has(f, o + ft_u32(f, o + 8), (*first + *num) * 4);
+        }
+        if (v < (uint32_t)g) lo = m + 1;
+        else hi = m;
+    }
+    return 0;
+}
+
+static int ft_colr_glyph(goome_font *f, int g, int64_t sx, int64_t sy, uint32_t argb, ft_cent *e)
+{
+    uint32_t first, num;
+    if (!ft_colr_layers(f, g, &first, &num)) return 0;
+    uint32_t lay = f->colr + ft_u32(f, f->colr + 8) + first * 4;
+    int x0 = 1 << 30, y0 = 1 << 30, x1 = -(1 << 30), y1 = -(1 << 30);
+    for (uint32_t i = 0; i < num; i++) {
+        int w, h, l, t, lg = (int)ft_u16(f, lay + i * 4);
+        if (lg >= f->nglyphs || !ft_render(f, lg, sx, sy, 0, &w, &h, &l, &t)) continue;
+        if (l < x0) x0 = l;
+        if (t < y0) y0 = t;
+        if (l + w > x1) x1 = l + w;
+        if (t + h > y1) y1 = t + h;
+    }
+    if (x1 <= x0 || y1 <= y0 || (int64_t)(x1 - x0) * (y1 - y0) > 1048576) return 0;
+    int W = x1 - x0, H = y1 - y0;
+    uint32_t *out = calloc((size_t)W * H, 4);
+    if (!out) return 0;
+    for (uint32_t i = 0; i < num; i++) {
+        int w, h, l, t, lg = (int)ft_u16(f, lay + i * 4);
+        if (lg >= f->nglyphs || !ft_render(f, lg, sx, sy, 0, &w, &h, &l, &t)) continue;
+        uint32_t col = ft_pal(f, ft_u16(f, lay + i * 4 + 2), argb), A = col >> 24, R = col >> 16 & 255, G = col >> 8 & 255, B = col & 255;
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++) {
+                uint32_t cov = f->tmp[(size_t)y * w + x];
+                if (!cov) continue;
+                uint32_t a = (A * cov + 127) / 255, *d = &out[(size_t)(y + t - y0) * W + (x + l - x0)], v = *d, inv = 255 - a;
+                uint32_t s = a << 24 | ((R * a + 127) / 255) << 16 | ((G * a + 127) / 255) << 8 | ((B * a + 127) / 255);
+                uint32_t rb = (v & 0xFF00FF) * inv + 0x800080, ag = (v >> 8 & 0xFF00FF) * inv + 0x800080;
+                *d = s + ((rb + (rb >> 8 & 0xFF00FF)) >> 8 & 0xFF00FF) + ((ag + (ag >> 8 & 0xFF00FF)) & 0xFF00FF00);
+            }
+    }
+    e->px = out, e->w = (int16_t)W, e->h = (int16_t)H, e->l = (int16_t)x0, e->t = (int16_t)y0;
+    return 1;
+}
+
+static const ft_cent *ft_cglyph(goome_font *f, int g, int px64, int64_t sx, int64_t sy, uint32_t argb)
+{
+    if (!f->color || px64 <= 0) return NULL;
+    if (!f->cc && !(f->cc = calloc(FT_CC, sizeof(ft_cent)))) return NULL;
+    uint32_t key = f->colr ? argb | 0xFF000000u : 0, h = (((uint32_t)g * 2654435761u) ^ ((uint32_t)px64 * 40503u) ^ key) & (FT_CC - 1);
+    for (;;) {
+        ft_cent *e = &f->cc[h];
+        if (!e->px64) break;
+        if (e->g == (uint32_t)g && e->px64 == (uint32_t)px64 && e->argb == key) return e->px ? e : NULL;
+        h = (h + 1) & (FT_CC - 1);
+    }
+    if (f->ncc >= FT_CC * 3 / 4 || f->ccb > (16u << 20)) {
+        ft_cc_clear(f);
+        h = (((uint32_t)g * 2654435761u) ^ ((uint32_t)px64 * 40503u) ^ key) & (FT_CC - 1);
+    }
+    ft_cent *e = &f->cc[h];
+    memset(e, 0, sizeof(*e));
+    e->g = (uint32_t)g, e->px64 = (uint32_t)px64, e->argb = key;
+    f->ncc++;
+    if (!(f->colr && ft_colr_glyph(f, g, sx, sy, argb, e)) && !((f->cblc || f->sbix) && ft_bitmap_glyph(f, g, px64, e))) return NULL;
+    f->ccb += (size_t)e->w * e->h * 4;
+    return e;
+}
+
+static int ft_ucls(uint32_t cp)
+{
+    int lo = 0, hi = (int)(sizeof(ud_bidi) / sizeof(ud_bidi[0])) - 1;
+    while (lo < hi) {
+        int m = (lo + hi + 1) / 2;
+        if ((ud_bidi[m] >> 5) <= cp) lo = m;
+        else hi = m - 1;
+    }
+    return (int)(ud_bidi[lo] & 31);
+}
+
+static uint32_t ft_mirror(uint32_t cp)
+{
+    int lo = 0, hi = (int)(sizeof(ud_mirror) / sizeof(ud_mirror[0]) / 2);
+    while (lo < hi) {
+        int m = (lo + hi) / 2;
+        if (ud_mirror[m * 2] == cp) return ud_mirror[m * 2 + 1];
+        if (ud_mirror[m * 2] < cp) lo = m + 1;
+        else hi = m;
+    }
+    return 0;
+}
+
+static const uint16_t *ft_forms(uint32_t cp)
+{
+    int lo = 0, hi = (int)(sizeof(ud_forms) / sizeof(ud_forms[0]) / 5);
+    if (cp < 0x600 || cp > 0x7FF) return NULL;
+    while (lo < hi) {
+        int m = (lo + hi) / 2;
+        if (ud_forms[m * 5] == cp) return ud_forms + m * 5 + 1;
+        if (ud_forms[m * 5] < cp) lo = m + 1;
+        else hi = m;
+    }
+    return NULL;
+}
+
+static int ft_emo_pres(uint32_t cp)
+{
+    if (cp >= 0x1F000 && cp <= 0x1FAFF) return cp < 0x1F100 || cp > 0x1F1E5 || (cp >= 0x1F18E && cp <= 0x1F19A);
+    for (size_t i = 0; i < sizeof(ud_emoji) / sizeof(ud_emoji[0]); i += 2)
+        if (cp >= ud_emoji[i] && cp <= ud_emoji[i + 1]) return 1;
+    return 0;
+}
+
+static int ft_ri(uint32_t cp) { return cp >= 0x1F1E6 && cp <= 0x1F1FF; }
+static int ft_vs(uint32_t cp) { return (cp >= 0xFE00 && cp <= 0xFE0F) || (cp >= 0xE0100 && cp <= 0xE01EF); }
+
+static int ft_ignorable(uint32_t cp)
+{
+    return cp == 0xAD || cp == 0x34F || cp == 0x61C || (cp >= 0x180B && cp <= 0x180F) || (cp >= 0x200B && cp <= 0x200F) || (cp >= 0x202A && cp <= 0x202E) ||
+           (cp >= 0x2060 && cp <= 0x206F) || cp == 0xFEFF || ft_vs(cp) || (cp >= 0xE0000 && cp <= 0xE0FFF);
+}
+
+static int ft_extend(uint32_t cp)
+{
+    if (cp < 0x300) return 0;
+    return ft_vs(cp) || cp == 0x200D || cp == 0x20E3 || (cp >= 0x1F3FB && cp <= 0x1F3FF) || (cp >= 0xE0020 && cp <= 0xE007F) || ft_ucls(cp) == UD_NSM;
+}
+
+static int ft_alef(uint32_t cp) { return cp == 0x622 || cp == 0x623 || cp == 0x625 || cp == 0x627; }
+
+static int ft_brk(uint32_t prev, uint32_t cp, int nri, int len)
+{
+    if (len >= 32 || cp < 32 || prev < 32 || cp == 127 || prev == 127) return 1;
+    if (ft_extend(cp) || prev == 0x200D) return 0;
+    if (ft_ri(cp) && ft_ri(prev) && nri == 1) return 0;
+    if (prev == 0x644 && ft_alef(cp)) return 0;
+    return 1;
+}
+
+static int ft_dir_mode;
+
+void goome_text_dir(int dir) { ft_dir_mode = dir == GOOME_DIR_LTR || dir == GOOME_DIR_RTL ? dir : GOOME_DIR_AUTO; }
+
+static uint32_t ft_utf8n(const char **ps, const char *end)
+{
+    const unsigned char *s = (const unsigned char *)*ps;
+    size_t left = (size_t)(end - *ps);
+    uint32_t c = s[0];
+    int n = 0;
+    uint32_t min = 0;
+    if (c < 0x80) {
+        *ps += 1;
+        return c;
+    }
+    if (c >= 0xC2 && c <= 0xDF) n = 1, c &= 31, min = 0x80;
+    else if (c >= 0xE0 && c <= 0xEF) n = 2, c &= 15, min = 0x800;
+    else if (c >= 0xF0 && c <= 0xF4) n = 3, c &= 7, min = 0x10000;
+    else {
+        *ps += 1;
+        return 0xFFFD;
+    }
+    for (int i = 1; i <= n; i++) {
+        if ((size_t)i >= left || (s[i] & 0xC0) != 0x80) {
+            *ps += i;
+            return 0xFFFD;
+        }
+        c = c << 6 | (s[i] & 63);
+    }
+    *ps += n + 1;
+    if (c < min || c > 0x10FFFF || (c >= 0xD800 && c <= 0xDFFF)) return 0xFFFD;
+    return c;
+}
+
+int gm_text_next(const char *s, int i, int n)
+{
+    if (!s || i >= n) return n < 0 ? 0 : n;
+    const char *p = s + i, *e = s + n;
+    uint32_t prev = ft_utf8n(&p, e);
+    int nri = ft_ri(prev), len = 1;
+    while (p < e) {
+        const char *q = p;
+        uint32_t cp = ft_utf8n(&q, e);
+        if (ft_brk(prev, cp, nri, len)) break;
+        nri += ft_ri(cp), len++, prev = cp, p = q;
+    }
+    return (int)(p - s);
+}
+
+int gm_text_prev(const char *s, int i)
+{
+    if (!s || i <= 0) return 0;
+    int st = i;
+    for (int hop = 0; st > 0 && hop < 64;) {
+        st--;
+        while (st > 0 && ((unsigned char)s[st] & 0xC0) == 0x80) st--;
+        const char *p = s + st;
+        uint32_t cp = ft_utf8n(&p, s + i);
+        if (ft_extend(cp) || ft_ri(cp) || ft_alef(cp) || cp == 0x200D) {
+            hop++;
+            continue;
+        }
+        if (st > 0) {
+            int b = st - 1;
+            while (b > 0 && ((unsigned char)s[b] & 0xC0) == 0x80) b--;
+            p = s + b;
+            if (ft_utf8n(&p, s + st) == 0x200D) {
+                hop++;
+                continue;
+            }
+        }
+        break;
+    }
+    int last = st;
+    for (int k = st; k < i;) {
+        last = k;
+        k = gm_text_next(s, k, i);
+    }
+    return last;
+}
+
+static int ft_scratch(goome_font *f, int m)
+{
+    if (m <= f->scap) return 1;
+    int c = f->scap ? f->scap : 256;
+    while (c < m) {
+        if (c > (1 << 24)) return 0;
+        c *= 2;
+    }
+    uint32_t *a = realloc(f->scp, (size_t)c * 4);
+    if (a) f->scp = a;
+    uint32_t *b = realloc(f->ssh, (size_t)c * 4);
+    if (b) f->ssh = b;
+    int *o = realloc(f->soff, (size_t)(c + 1) * sizeof(int));
+    if (o) f->soff = o;
+    int *cs = realloc(f->scs, (size_t)(c + 1) * sizeof(int));
+    if (cs) f->scs = cs;
+    int *od = realloc(f->sord, (size_t)(c + 1) * sizeof(int));
+    if (od) f->sord = od;
+    uint8_t *k1 = realloc(f->scl, (size_t)c);
+    if (k1) f->scl = k1;
+    uint8_t *k2 = realloc(f->swk, (size_t)c);
+    if (k2) f->swk = k2;
+    uint8_t *k3 = realloc(f->slv, (size_t)c);
+    if (k3) f->slv = k3;
+    if (!a || !b || !o || !cs || !od || !k1 || !k2 || !k3) return 0;
+    f->scap = c;
+    return 1;
+}
+
+static int ft_strong(int t) { return t == UD_L ? UD_L : (t == UD_R || t == UD_AL || t == UD_EN || t == UD_AN) ? UD_R : -1; }
+
+static int ft_bracket(uint32_t cp)
+{
+    static const uint32_t pairs[] = {'(', ')', '[', ']', '{', '}', 0x2045, 0x2046, 0x207D, 0x207E, 0x208D, 0x208E, 0x2329, 0x232A, 0x3008, 0x3009, 0x300A, 0x300B,
+                                     0x300C, 0x300D, 0x300E, 0x300F, 0x3010, 0x3011, 0xFF08, 0xFF09, 0xFF3B, 0xFF3D, 0xFF5B, 0xFF5D};
+    for (int i = 0; i < (int)(sizeof(pairs) / sizeof(pairs[0])); i++)
+        if (pairs[i] == cp) return i & 1 ? -(i / 2 + 1) : i / 2 + 1;
+    return 0;
+}
+
+static void ft_pairs(const uint32_t *cp, uint8_t *t, int m, int e, int sos)
+{
+    int st[63][2], ns = 0, pr[64][2], np = 0;
+    for (int i = 0; i < m && np < 64; i++) {
+        if (t[i] != UD_ON) continue;
+        int b = ft_bracket(cp[i]);
+        if (b > 0) {
+            if (ns == 63) break;
+            st[ns][0] = b, st[ns][1] = i, ns++;
+        } else if (b < 0) {
+            for (int k = ns - 1; k >= 0; k--)
+                if (st[k][0] == -b) {
+                    int j = np++;
+                    while (j > 0 && pr[j - 1][0] > st[k][1]) pr[j][0] = pr[j - 1][0], pr[j][1] = pr[j - 1][1], j--;
+                    pr[j][0] = st[k][1], pr[j][1] = i, ns = k;
+                    break;
+                }
+        }
+    }
+    int dir = e & 1 ? UD_R : UD_L;
+    for (int p = 0; p < np; p++) {
+        int a = pr[p][0], z = pr[p][1], in = -1, set = -1;
+        for (int i = a + 1; i < z; i++) {
+            int s = ft_strong(t[i]);
+            if (s == dir) {
+                in = dir;
+                break;
+            }
+            if (s >= 0) in = s;
+        }
+        if (in == dir) set = dir;
+        else if (in >= 0) {
+            int before = sos;
+            for (int i = a - 1; i >= 0; i--)
+                if (ft_strong(t[i]) >= 0) {
+                    before = ft_strong(t[i]);
+                    break;
+                }
+            set = before == in ? in : dir;
+        }
+        if (set < 0) continue;
+        t[a] = t[z] = (uint8_t)set;
+    }
+}
+
+static void ft_levels(const uint32_t *cp, const uint8_t *cls, uint8_t *t, uint8_t *lv, int m, int e)
+{
+    int sos = e & 1 ? UD_R : UD_L;
+    for (int i = 0; i < m; i++) {
+        int c = cls[i];
+        if (c >= UD_LRE && c <= UD_PDF) c = UD_BN;
+        else if (c >= UD_LRI) c = UD_ON;
+        t[i] = (uint8_t)c;
+    }
+    for (int i = 0; i < m; i++)
+        if (t[i] == UD_NSM || t[i] == UD_BN) t[i] = (uint8_t)(i ? t[i - 1] : sos);
+    int last = sos;
+    for (int i = 0; i < m; i++) {
+        if (t[i] == UD_L || t[i] == UD_R || t[i] == UD_AL) last = t[i];
+        else if (t[i] == UD_EN && last == UD_AL) t[i] = UD_AN;
+    }
+    for (int i = 0; i < m; i++)
+        if (t[i] == UD_AL) t[i] = UD_R;
+    for (int i = 1; i + 1 < m; i++) {
+        if (t[i] == UD_ES && t[i - 1] == UD_EN && t[i + 1] == UD_EN) t[i] = UD_EN;
+        else if (t[i] == UD_CS && t[i - 1] == t[i + 1] && (t[i - 1] == UD_EN || t[i - 1] == UD_AN)) t[i] = t[i - 1];
+    }
+    for (int i = 0; i < m;) {
+        if (t[i] != UD_ET) {
+            i++;
+            continue;
+        }
+        int k = i;
+        while (k < m && t[k] == UD_ET) k++;
+        if ((i > 0 && t[i - 1] == UD_EN) || (k < m && t[k] == UD_EN))
+            for (int j = i; j < k; j++) t[j] = UD_EN;
+        i = k;
+    }
+    for (int i = 0; i < m; i++)
+        if (t[i] == UD_ES || t[i] == UD_ET || t[i] == UD_CS) t[i] = UD_ON;
+    last = sos;
+    for (int i = 0; i < m; i++) {
+        if (t[i] == UD_L || t[i] == UD_R) last = t[i];
+        else if (t[i] == UD_EN && last == UD_L) t[i] = UD_L;
+    }
+    ft_pairs(cp, t, m, e, sos);
+    for (int i = 0; i < m;) {
+        if (ft_strong(t[i]) >= 0) {
+            i++;
+            continue;
+        }
+        int k = i;
+        while (k < m && ft_strong(t[k]) < 0) k++;
+        int a = i ? ft_strong(t[i - 1]) : sos, b = k < m ? ft_strong(t[k]) : sos, d = a == b ? a : (e & 1 ? UD_R : UD_L);
+        for (int j = i; j < k; j++) t[j] = (uint8_t)d;
+        i = k;
+    }
+    for (int i = 0; i < m; i++) {
+        int l = e;
+        if (!(e & 1)) l += t[i] == UD_R ? 1 : (t[i] == UD_AN || t[i] == UD_EN) ? 2 : 0;
+        else l += (t[i] == UD_L || t[i] == UD_EN || t[i] == UD_AN) ? 1 : 0;
+        lv[i] = (uint8_t)l;
+    }
+    for (int i = m - 1, tail = 1; i >= 0; i--) {
+        int c = cls[i];
+        if (c == UD_S || c == UD_B) lv[i] = (uint8_t)e, tail = 1;
+        else if (tail && (c == UD_WS || c == UD_BN || (c >= UD_LRE && c <= UD_PDI))) lv[i] = (uint8_t)e;
+        else tail = 0;
+    }
+}
+
+static int ft_has_cp(goome_font **ch, int nch, uint32_t cp)
+{
+    for (int i = 0; i < nch; i++)
+        if (ft_cmap(ch[i], cp)) return 1;
+    return 0;
+}
+
+static int ft_jtype(uint32_t cp)
+{
+    if (cp == 0x640 || cp == 0x200D) return 'C';
+    const uint16_t *fm = ft_forms(cp);
+    if (fm) return fm[2] || fm[3] ? 'D' : fm[1] ? 'R' : 'U';
+    return cp >= 0x300 && ft_ucls(cp) == UD_NSM ? 'T' : 'U';
+}
+
+static void ft_arabic(goome_font **ch, int nch, const uint32_t *cp, uint32_t *out, int m)
+{
+    for (int i = 0; i < m; i++) {
+        int ti = ft_jtype(cp[i]);
+        const uint16_t *fm = ft_forms(cp[i]);
+        if (!fm || (ti != 'D' && ti != 'R')) continue;
+        int p = i - 1, n = i + 1;
+        while (p >= 0 && ft_jtype(cp[p]) == 'T') p--;
+        while (n < m && ft_jtype(cp[n]) == 'T') n++;
+        int tp = p >= 0 ? ft_jtype(cp[p]) : 'U', tn = n < m ? ft_jtype(cp[n]) : 'U';
+        int jp = tp == 'D' || tp == 'C', jn = ti == 'D' && (tn == 'D' || tn == 'R' || tn == 'C');
+        if (cp[i] == 0x644 && i + 1 < m && ft_alef(cp[i + 1])) {
+            for (size_t k = 0; k < sizeof(ud_lamalef) / sizeof(ud_lamalef[0]); k += 3)
+                if (ud_lamalef[k] == cp[i + 1]) {
+                    uint32_t lg = ud_lamalef[k + 1 + (jp ? 1 : 0)];
+                    if (ft_has_cp(ch, nch, lg)) out[i] = lg, out[i + 1] = 0;
+                    break;
+                }
+            if (!out[i + 1]) {
+                i++;
+                continue;
+            }
+        }
+        int want = jp && jn ? 3 : jp ? 1 : jn ? 2 : 0;
+        if (want == 3 && !fm[3]) want = 1;
+        if (want == 2 && !fm[2]) want = 0;
+        if (want == 1 && !fm[1]) want = 0;
+        uint32_t c = fm[want];
+        if (c && ft_has_cp(ch, nch, c)) out[i] = c;
+    }
+}
+
+static int ft_pick(goome_font **ch, int nch, uint32_t cp, int pref, int *fi)
+{
+    for (int pass = 0; pass < (pref ? 2 : 1); pass++)
+        for (int i = 0; i < nch; i++) {
+            int col = ch[i]->color != 0;
+            if (pref == 1 && (pass == 0) != col) continue;
+            if (pref == 2 && (pass == 0) == col) continue;
+            int g = ft_cmap(ch[i], cp);
+            if (g) {
+                *fi = i;
+                return g;
+            }
+        }
+    *fi = 0;
+    return 0;
+}
+
+static int ft_uvs(const goome_font *f, uint32_t base, uint32_t vs)
+{
+    uint32_t o = f->uvs, n = ft_u32(f, o + 6);
+    if (!o) return -1;
+    for (uint32_t i = 0; i < n && i < 256; i++) {
+        uint32_t r = o + 10 + i * 11;
+        if ((ft_u32(f, r) >> 8) != vs) continue;
+        uint32_t nd = ft_u32(f, r + 7);
+        if (!nd) return -1;
+        uint32_t t = o + nd, cnt = ft_u32(f, t), lo = 0, hi = cnt < 1000000 ? cnt : 1000000;
+        while (lo < hi) {
+            uint32_t m = (lo + hi) / 2, u = ft_u32(f, t + 4 + m * 5) >> 8;
+            if (u == base) {
+                int g = (int)ft_u16(f, t + 4 + m * 5 + 3);
+                return g < f->nglyphs ? g : -1;
+            }
+            if (u < base) lo = m + 1;
+            else hi = m;
+        }
+        return -1;
+    }
+    return -1;
+}
+
+static int ft_liga(const goome_font *f, int *g, uint32_t *src, int n)
+{
+    for (int li = 0; li < f->nlig && n > 1; li++) {
+        uint32_t st = f->lig[li], cov = st + ft_u16(f, st + 2), nset = ft_u16(f, st + 4);
+        for (int i = 0; i < n; i++) {
+            int ci = ft_coverage(f, cov, g[i]);
+            if (ci < 0 || (uint32_t)ci >= nset) continue;
+            uint32_t set = st + ft_u16(f, st + 6 + (uint32_t)ci * 2), nl = ft_u16(f, set);
+            for (uint32_t k = 0; k < nl && k < 4096; k++) {
+                uint32_t lg = set + ft_u16(f, set + 2 + k * 2), cc = ft_u16(f, lg + 2), out = ft_u16(f, lg);
+                if (cc < 1 || cc > 32 || i + (int)cc > n || out >= (uint32_t)f->nglyphs) continue;
+                int ok = 1;
+                for (uint32_t q = 1; q < cc && ok; q++) ok = ft_u16(f, lg + 4 + (q - 1) * 2) == (uint32_t)g[i + (int)q];
+                if (!ok) continue;
+                g[i] = (int)out;
+                if (cc > 1) {
+                    memmove(g + i + 1, g + i + cc, sizeof(int) * (size_t)(n - i - (int)cc));
+                    memmove(src + i + 1, src + i + cc, sizeof(uint32_t) * (size_t)(n - i - (int)cc));
+                    n -= (int)cc - 1;
+                }
+                break;
+            }
+        }
+    }
+    return n;
+}
+
+static int ft_emit(goome_font *f, int64_t adv, int fi, int g, int lo, int hi, int rtl, int kind, int *ng)
+{
+    if (*ng >= f->sglcap) {
+        int c = f->sglcap ? f->sglcap * 2 : 256;
+        ft_gl *n = realloc(f->sgl, sizeof(ft_gl) * (size_t)c);
+        if (!n) return 0;
+        f->sgl = n, f->sglcap = c;
+    }
+    ft_gl *e = &f->sgl[(*ng)++];
+    e->g = g, e->lo = lo, e->hi = hi, e->adv = adv, e->fi = (uint8_t)fi, e->rtl = (uint8_t)rtl, e->kind = (uint8_t)kind;
+    return 1;
+}
+
+static int64_t ft_adv_in(goome_font *f, goome_font *o, int g)
+{
+    int64_t a = ft_adv(o, g);
+    return o == f ? a : ft_divr(a * f->upem, o->upem);
+}
+
+static int ft_cluster(goome_font *f, goome_font **ch, int nch, int a, int b, int rtl, int *ng)
+{
+    const uint32_t *ocp = f->scp, *cp = f->ssh;
+    int lo = f->soff[a], hi = f->soff[b];
+    uint32_t c0 = ocp[a];
+    if (c0 == '\t') return ft_emit(f, 0, 0, 0, lo, hi, rtl, 1, ng);
+    if (c0 < 32 || c0 == 127) return ft_emit(f, 0, 0, 0, lo, hi, rtl, 2, ng);
+    int pref = ft_emo_pres(c0) || ft_ri(c0) ? 1 : 0, vs = 0;
+    for (int k = a + 1; k < b; k++) {
+        uint32_t c = ocp[k];
+        if (c == 0xFE0E) pref = 2;
+        else if (c == 0xFE0F || c == 0x20E3 || c == 0x200D || (c >= 0x1F3FB && c <= 0x1F3FF) || (c >= 0xE0020 && c <= 0xE007F)) pref = pref == 2 ? 2 : 1;
+        if (ft_vs(c) && !vs) vs = (int)c;
+    }
+    int fi = 0, k0 = a;
+    while (k0 < b && !cp[k0]) k0++;
+    if (k0 >= b) return ft_emit(f, 0, 0, 0, lo, hi, rtl, 2, ng);
+    int g0 = ft_pick(ch, nch, cp[k0], pref, &fi);
+    if (!g0 && ft_ignorable(cp[k0]) && b - a == 1) return ft_emit(f, 0, 0, 0, lo, hi, rtl, 2, ng);
+    goome_font *F = ch[fi];
+    if (vs) {
+        int u = ft_uvs(F, cp[k0], (uint32_t)vs);
+        if (u > 0) g0 = u;
+    }
+    int gs[32], fs[32], n = 0;
+    uint32_t src[32];
+    for (int k = k0; k < b && n < 32; k++) {
+        uint32_t c = cp[k];
+        if (!c) continue;
+        int g = k == k0 ? g0 : ft_cmap(F, c), gf = fi;
+        if (!g && k > k0) {
+            if (ft_ignorable(c)) continue;
+            g = ft_pick(ch, nch, c, 0, &gf);
+            if (!g) gf = fi;
+        }
+        gs[n] = g, fs[n] = gf, src[n] = c, n++;
+    }
+    if (n > 1 && F->nlig) {
+        int same = 1;
+        for (int k = 1; k < n; k++) same &= fs[k] == fi;
+        if (same) n = ft_liga(F, gs, src, n);
+    }
+    int w = 0;
+    for (int k = 0; k < n; k++)
+        if (!(n > 1 && ft_ignorable(src[k]))) gs[w] = gs[k], fs[w] = fs[k], src[w] = src[k], w++;
+    n = w;
+    if (!n) return ft_emit(f, 0, 0, 0, lo, hi, rtl, 2, ng);
+    for (int q = 0; q < n; q++) {
+        int k = rtl ? n - 1 - q : q;
+        if (!ft_emit(f, ft_adv_in(f, ch[fs[k]], gs[k]), fs[k], gs[k], lo, hi, rtl, 0, ng)) return 0;
+    }
+    return 1;
+}
+
+static int ft_chain(goome_font *f, goome_font **ch)
+{
+    int n = 1;
+    ch[0] = f;
+    for (int i = 0; i < n && n < 16; i++)
+        for (int k = 0; k < ch[i]->nfb && n < 16; k++) {
+            goome_font *c = ch[i]->fb[k];
+            int dup = 0;
+            for (int j = 0; j < n; j++) dup |= ch[j] == c;
+            if (!dup) ch[n++] = c;
+        }
+    return n;
+}
+
+static int ft_line_dir(goome_font *f, int m)
+{
+    if (ft_dir_mode == GOOME_DIR_RTL) return 1;
+    if (ft_dir_mode == GOOME_DIR_LTR) return 0;
+    for (int i = 0; i < m; i++) {
+        int c = f->scl[i];
+        if (c == UD_L) return 0;
+        if (c == UD_R || c == UD_AL) return 1;
+    }
+    return 0;
+}
+
+static int ft_shape(goome_font *f, goome_font **ch, int nch, const char *s, int n, int *para)
+{
+    int m = 0, ng = 0, bidi = ft_dir_mode == GOOME_DIR_RTL, arab = 0;
+    if (para) *para = 0;
+    if (n <= 0) return 0;
+    if (!ft_scratch(f, n + 1)) return -1;
+    const char *p = s, *e = s + n;
+    while (p < e) {
+        uint32_t c;
+        f->soff[m] = (int)(p - s);
+        f->scp[m] = c = ft_utf8n(&p, e);
+        f->ssh[m] = c;
+        if (c >= 0x590) {
+            int k = ft_ucls(c);
+            bidi |= k == UD_R || k == UD_AL || k == UD_AN || k == UD_RLE || k == UD_RLO || k == UD_RLI;
+            arab |= (c >= 0x600 && c <= 0x6FF) || (c >= 0x750 && c <= 0x77F) || (c >= 0x8A0 && c <= 0x8FF);
+        }
+        m++;
+    }
+    f->soff[m] = n;
+    int base = 0;
+    if (bidi) {
+        for (int i = 0; i < m; i++) f->scl[i] = (uint8_t)ft_ucls(f->scp[i]);
+        base = ft_line_dir(f, m);
+        ft_levels(f->scp, f->scl, f->swk, f->slv, m, base);
+        for (int i = 0; i < m; i++)
+            if (f->slv[i] & 1) {
+                uint32_t mc = ft_mirror(f->scp[i]);
+                if (mc && ft_has_cp(ch, nch, mc)) f->ssh[i] = mc;
+            }
+    } else
+        memset(f->slv, 0, (size_t)m);
+    if (para) *para = base + (bidi ? 1 : 0);
+    if (arab) ft_arabic(ch, nch, f->scp, f->ssh, m);
+    int nc = 0, nri = 0, len = 0;
+    for (int i = 0; i < m; i++) {
+        if (!i || ft_brk(f->scp[i - 1], f->scp[i], nri, len)) f->scs[nc++] = i, nri = 0, len = 0;
+        nri += ft_ri(f->scp[i]), len++;
+    }
+    f->scs[nc] = m;
+    int top = 0, low = 255;
+    for (int k = 0; k < nc; k++) {
+        int l = f->slv[f->scs[k]];
+        f->sord[k] = k;
+        if (l > top) top = l;
+        if ((l & 1) && l < low) low = l;
+    }
+    for (int l = top; l >= low && l > 0; l--)
+        for (int k = 0; k < nc;) {
+            if (f->slv[f->scs[f->sord[k]]] < l) {
+                k++;
+                continue;
+            }
+            int j = k;
+            while (j < nc && f->slv[f->scs[f->sord[j]]] >= l) j++;
+            for (int x = k, y = j - 1; x < y; x++, y--) {
+                int t = f->sord[x];
+                f->sord[x] = f->sord[y], f->sord[y] = t;
+            }
+            k = j;
+        }
+    for (int q = 0; q < nc; q++) {
+        int k = f->sord[q], a = f->scs[k], b = f->scs[k + 1];
+        if (!ft_cluster(f, ch, nch, a, b, f->slv[a] & 1, &ng)) return -1;
+    }
+    return ng;
+}
+
+int gm_text_rtl(goome_font *f, const char *s, int n)
+{
+    if (!f || !s || n <= 0) return 0;
+    goome_font *ch[16];
+    int para = 0;
+    if (ft_dir_mode == GOOME_DIR_RTL) return 2;
+    int any = 0;
+    for (int i = 0; i < n && !any; i++) any = (unsigned char)s[i] >= 0xD6;
+    if (!any) return 0;
+    if (ft_shape(f, ch, ft_chain(f, ch), s, n, &para) < 0) return 0;
+    return para;
+}
+
+int gm_text_layout(goome_font *f, double size, const char *s, int n, gm_tc **out)
+{
+    *out = NULL;
+    if (!f || !s || n <= 0 || !ft_okd(size) || size <= 0) return 0;
+    goome_font *ch[16];
+    int nch = ft_chain(f, ch), ng = ft_shape(f, ch, nch, s, n, NULL), sp = ft_cmap(f, ' '), prev = -1, nb = 0;
+    if (ng <= 0) return 0;
+    gm_tc *b = malloc(sizeof(gm_tc) * (size_t)ng);
+    if (!b) return 0;
+    int64_t pen = 0;
+    for (int i = 0; i < ng; i++) {
+        ft_gl *e = &f->sgl[i];
+        int64_t x0 = pen;
+        if (e->kind == 1) pen += 4 * (int64_t)ft_adv(f, sp), prev = -1;
+        else if (e->kind == 0) {
+            if (e->fi == 0 && !e->rtl) {
+                if (prev >= 0) pen += ft_kern(f, prev, e->g), x0 = pen;
+                prev = e->g;
+            } else
+                prev = -1;
+            pen += e->adv;
+        }
+        double a = (double)x0 * size / f->upem, z = (double)pen * size / f->upem;
+        if (nb && b[nb - 1].lo == e->lo) {
+            if (a < b[nb - 1].x0) b[nb - 1].x0 = a;
+            if (z > b[nb - 1].x1) b[nb - 1].x1 = z;
+            continue;
+        }
+        b[nb].lo = e->lo, b[nb].hi = e->hi, b[nb].rtl = e->rtl, b[nb].x0 = a, b[nb].x1 = z;
+        nb++;
+    }
+    for (int i = 1; i < nb; i++) {
+        gm_tc t = b[i];
+        int j = i - 1;
+        while (j >= 0 && b[j].lo > t.lo) b[j + 1] = b[j], j--;
+        b[j + 1] = t;
+    }
+    *out = b;
+    return nb;
+}
+
+static void ft_scales(const goome_font *f, int px64, int64_t *sx, int64_t *sy)
+{
+    *sx = ((int64_t)px64 * 1048576 + f->upem / 2) / f->upem;
+    *sy = *sx;
+    if (px64 < 32 * 64 && f->xh > 0) {
+        int64_t xp = (int64_t)f->xh * 64 * *sx >> 24, want = (xp + 128) / 256 * 256;
+        if (want < 256) want = 256;
+        if (xp > 0) *sy = *sx * want / xp;
+    }
+}
 
 // draws (c != NULL) or measures. returns the widest line in logical px
 static double ft_run(goome_canvas *c, goome_font *f, double size, double x, double y, const char *s, uint32_t argb, int *lines)
@@ -7577,13 +8968,7 @@ static double ft_run(goome_canvas *c, goome_font *f, double size, double x, doub
         if (k[2] <= k[0] || k[3] <= k[1]) draw = 0;
     }
     if (draw) {
-        sx = ((int64_t)px64 * 1048576 + f->upem / 2) / f->upem;
-        sy = sx;
-        if (px64 < 32 * 64 && f->xh > 0) {
-            int64_t xp = (int64_t)f->xh * 64 * sx >> 24, want = (xp + 128) / 256 * 256;
-            if (want < 256) want = 256;
-            if (xp > 0) sy = sx * want / xp;
-        }
+        ft_scales(f, px64, &sx, &sy);
         ft_colors(f, argb);
         ox = (int64_t)ft_round((x - c->ox) * c->scale * 256);
         double top = (y - c->oy) * c->scale;
@@ -7591,35 +8976,54 @@ static double ft_run(goome_canvas *c, goome_font *f, double size, double x, doub
         base = (int64_t)ft_round(top + asc);
         lh = (int64_t)ft_round(lhl * c->scale * 256);
     }
+    goome_font *ch[16];
+    int64_t fsx[16], fsy[16];
+    int nch = ft_chain(f, ch);
+    fsx[0] = sx, fsy[0] = sy;
+    for (int i = 1; i < nch; i++) fsx[i] = fsy[i] = 0;
     int64_t pen = 0, best = 0, line0 = base * 256;
     int prev = -1, sp = ft_cmap(f, ' ');
-    while (*s) {
-        uint32_t cp = ft_utf8(&s);
-        if (cp == '\n') {
-            if (pen > best) best = pen;
-            pen = 0, prev = -1, (*lines)++;
-            line0 += lh;
-            continue;
-        }
-        if (cp == '\t') {
-            pen += 4 * (int64_t)ft_adv(f, sp), prev = -1;
-            continue;
-        }
-        if (cp < 32 || cp == 127 || cp == '\r') continue;
-        int g = ft_cmap(f, cp);
-        if (prev >= 0) pen += ft_kern(f, prev, g);
-        prev = g;
-        if (draw && pen * 64 < ((int64_t)1 << 62) / (sx + 1) && pen * 64 > -(((int64_t)1 << 62) / (sx + 1))) {
-            int64_t gx = ox + (pen * 64 * sx >> 24), ix = ft_fdiv(gx, 256), ph = ((gx - ix * 256) + 32) >> 6;
-            if (ph == 4) ph = 0, ix++;
-            int64_t by = ft_fdiv(line0 + 128, 256);
-            if (ix > -100000 && ix < 100000 && by > -100000 && by < 100000) {
-                const uint8_t *bits;
-                const ft_ent *e = ft_glyph(f, g, px64, sx, sy, (int)ph, &bits);
-                if (e) ft_blit(c, f, bits, e->w, e->h, (int)ix + e->l, (int)by + e->t, k);
+    for (;;) {
+        const char *le = s;
+        while (*le && *le != '\n') le++;
+        int ng = ft_shape(f, ch, nch, s, (int)(le - s), NULL);
+        for (int i = 0; i < ng; i++) {
+            const ft_gl *e = &f->sgl[i];
+            if (e->kind == 1) {
+                pen += 4 * (int64_t)ft_adv(f, sp), prev = -1;
+                continue;
             }
+            if (e->kind) continue;
+            int g = e->g, fi = e->fi;
+            if (fi == 0 && !e->rtl) {
+                if (prev >= 0) pen += ft_kern(f, prev, g);
+                prev = g;
+            } else
+                prev = -1;
+            if (draw && pen * 64 < ((int64_t)1 << 62) / (sx + 1) && pen * 64 > -(((int64_t)1 << 62) / (sx + 1))) {
+                int64_t gx = ox + (pen * 64 * sx >> 24), ix = ft_fdiv(gx, 256), ph = ((gx - ix * 256) + 32) >> 6;
+                if (ph == 4) ph = 0, ix++;
+                int64_t by = ft_fdiv(line0 + 128, 256);
+                if (ix > -100000 && ix < 100000 && by > -100000 && by < 100000) {
+                    goome_font *F = ch[fi];
+                    if (!fsx[fi]) ft_scales(F, px64, &fsx[fi], &fsy[fi]);
+                    const ft_cent *ce = F->color ? ft_cglyph(F, g, px64, fsx[fi], fsy[fi], argb) : NULL;
+                    if (ce) ft_cblit(c, ce->px, ce->w, ce->h, (int)ix + ce->l, (int)by + ce->t, k, argb >> 24);
+                    else {
+                        const uint8_t *bits;
+                        if (F != f) ft_colors(F, argb);
+                        const ft_ent *ge = ft_glyph(F, g, px64, fsx[fi], fsy[fi], (int)ph, &bits);
+                        if (ge) ft_blit(c, F, bits, ge->w, ge->h, (int)ix + ge->l, (int)by + ge->t, k);
+                    }
+                }
+            }
+            pen += e->adv;
         }
-        pen += ft_adv(f, g);
+        if (*le != '\n') break;
+        if (pen > best) best = pen;
+        pen = 0, prev = -1, (*lines)++;
+        line0 += lh;
+        s = le + 1;
     }
     if (pen > best) best = pen;
     return (double)best * size / f->upem;
@@ -7688,6 +9092,11 @@ double goome_text_line_height(goome_font *f, double size)
 #undef FT_ARENA
 #undef FT_SLOTS
 #undef FT_KC
+#undef FT_MAXMAP
+#undef FT_NFB
+#undef FT_CC
+#undef FT_NLIG
+#undef FT_REG
 #undef FT_TOL
 #endif
 
@@ -9515,6 +10924,71 @@ static int ui_u8_next(const char *s, int i, int len)
     return i;
 }
 
+static int ui_bd(goome_ui *u, const char *s, int n) { return u->th.font && n > 0 ? gm_text_rtl(u->th.font, s, n) : 0; }
+
+static double ui_bd_x(const gm_tc *b, int nb, int i)
+{
+    if (nb <= 0) return 0;
+    for (int k = 0; k < nb; k++)
+        if (b[k].lo < i && i <= b[k].hi) return b[k].rtl ? b[k].x0 : b[k].x1;
+    for (int k = 0; k < nb; k++)
+        if (b[k].lo >= i) return b[k].rtl ? b[k].x1 : b[k].x0;
+    return b[nb - 1].rtl ? b[nb - 1].x0 : b[nb - 1].x1;
+}
+
+static int ui_bd_hit(const gm_tc *b, int nb, double x)
+{
+    if (nb <= 0) return 0;
+    int kl = 0, kr = 0;
+    for (int k = 0; k < nb; k++) {
+        if (x >= b[k].x0 && x < b[k].x1) return ((x < (b[k].x0 + b[k].x1) / 2) != (b[k].rtl != 0)) ? b[k].lo : b[k].hi;
+        if (b[k].x0 < b[kl].x0) kl = k;
+        if (b[k].x1 > b[kr].x1) kr = k;
+    }
+    if (x < b[kl].x0) return b[kl].rtl ? b[kl].hi : b[kl].lo;
+    return b[kr].rtl ? b[kr].lo : b[kr].hi;
+}
+
+static int ui_bd_move(const gm_tc *b, int nb, int i, int right)
+{
+    double cx = ui_bd_x(b, nb, i), bx = 0;
+    int best = -1;
+    for (int k = -1; k < nb; k++) {
+        int c = k < 0 ? 0 : b[k].hi;
+        double x = ui_bd_x(b, nb, c);
+        if (right ? x > cx + 0.01 && (best < 0 || x < bx) : x < cx - 0.01 && (best < 0 || x > bx)) best = c, bx = x;
+    }
+    return best;
+}
+
+static int ui_bd_lay(goome_ui *u, const char *s, int n, gm_tc **b) { return gm_text_layout(u->th.font, u->size, s, n, b); }
+
+static void ui_bd_sel(goome_ui *u, const gm_tc *b, int nb, int lo, int hi, double ox, double y, double h, double r, uint32_t col, double extra)
+{
+    double *sp = malloc(sizeof(double) * 2 * (size_t)(nb + 1));
+    int n = 0;
+    if (!sp) return;
+    for (int k = 0; k < nb; k++) {
+        if (b[k].lo < lo || b[k].hi > hi || b[k].x1 <= b[k].x0) continue;
+        int j = n++;
+        while (j > 0 && sp[(j - 1) * 2] > b[k].x0) sp[j * 2] = sp[(j - 1) * 2], sp[j * 2 + 1] = sp[(j - 1) * 2 + 1], j--;
+        sp[j * 2] = b[k].x0, sp[j * 2 + 1] = b[k].x1;
+    }
+    if (extra > 0) {
+        double e = nb ? b[0].x1 : 0;
+        for (int k = 0; k < nb; k++) e = ui_max(e, b[k].x1);
+        sp[n * 2] = e, sp[n * 2 + 1] = e + extra, n++;
+    }
+    for (int k = 0; k < n;) {
+        double a = sp[k * 2], z = sp[k * 2 + 1];
+        int j = k + 1;
+        while (j < n && sp[j * 2] <= z + 0.01) z = ui_max(z, sp[j * 2 + 1]), j++;
+        ui_rect(u, ui_bx(ox + a, y, ui_max(1, z - a), h), r, col);
+        k = j;
+    }
+    free(sp);
+}
+
 static int ui_wrap(goome_ui *u, const char *s, double w, int *st, int *ln, int max)
 {
     int n = 0, len = (int)strlen(s), i = 0;
@@ -9828,8 +11302,36 @@ static double ui_iw(goome_ui *u, const char *buf, int i, const char *disp, int m
     return ui_tw(u, disp, n < (int)strlen(disp) ? n : (int)strlen(disp), 0);
 }
 
+static double ui_cx(goome_ui *u, const char *buf, int len, int i, const char *disp, int ml)
+{
+    if (disp || !ui_bd(u, buf, len)) return ui_iw(u, buf, i, disp, ml);
+    gm_tc *b;
+    int nb = ui_bd_lay(u, buf, len, &b);
+    double x = ui_bd_x(b, nb, i);
+    free(b);
+    return x;
+}
+
+static int ui_ic_step(goome_ui *u, const char *buf, int len, int cur, int right, const char *disp)
+{
+    if (disp) return right ? ui_u8_next(buf, cur, len) : ui_u8_prev(buf, cur);
+    if (ui_bd(u, buf, len)) {
+        gm_tc *b;
+        int nb = ui_bd_lay(u, buf, len, &b), to = ui_bd_move(b, nb, cur, right);
+        free(b);
+        return to < 0 ? cur : to;
+    }
+    return right ? gm_text_next(buf, cur, len) : gm_text_prev(buf, cur);
+}
+
 static int ui_caret_at(goome_ui *u, const char *buf, int len, double want, const char *disp, int ml)
 {
+    if (!disp && ui_bd(u, buf, len)) {
+        gm_tc *b;
+        int nb = ui_bd_lay(u, buf, len, &b), at = ui_bd_hit(b, nb, want);
+        free(b);
+        return at;
+    }
     double best = 1e9;
     int cur = 0;
     for (int i = 0; i <= len; i = ui_u8_next(buf, i, len)) {
@@ -10010,8 +11512,8 @@ int goome_ui_input_ex(goome_ui *u, const char *label, char *buf, int cap, int fl
             } else if (act == GOOME_ACT_WORD_LEFT || act == GOOME_ACT_WORD_RIGHT || (act < 0 && (key == GOOME_K_LEFT || key == GOOME_K_RIGHT))) {
                 int r = act == GOOME_ACT_WORD_RIGHT || (act < 0 && key == GOOME_K_RIGHT), wd = act >= 0;
                 if (has && !sh) cur = r ? hi : lo;
-                else if (r) cur = wd ? (pw ? len : ui_word_right(buf, cur, len)) : ui_u8_next(buf, cur, len);
-                else cur = wd ? (pw ? 0 : ui_word_left(buf, cur)) : ui_u8_prev(buf, cur);
+                else if (r) cur = wd ? (pw ? len : ui_word_right(buf, cur, len)) : ui_ic_step(u, buf, len, cur, 1, dp);
+                else cur = wd ? (pw ? 0 : ui_word_left(buf, cur)) : ui_ic_step(u, buf, len, cur, 0, dp);
                 if (!sh) anc = cur;
                 u->undo_kind = 0;
             } else if (act == GOOME_ACT_DOC_START || act == GOOME_ACT_DOC_END || key == GOOME_K_HOME || key == GOOME_K_UP || key == GOOME_K_END || key == GOOME_K_DOWN) {
@@ -10037,7 +11539,7 @@ int goome_ui_input_ex(goome_ui *u, const char *label, char *buf, int cap, int fl
     int focused = u->focus == id;
     double h = ui_anim(u, s, 0, hov), f = ui_anim_ms(u, s, 1, focused, th->anim_ms);
     if (pw) ui_mask(u, buf, len, disp, (int)sizeof(disp));
-    double cx = ui_iw(u, buf, cur, dp, ml);
+    double cx = ui_cx(u, buf, len, cur, dp, ml);
     if (cx - s->v[2] > iw - 2) s->v[2] = cx - iw + 2;
     if (cx - s->v[2] < 0) s->v[2] = cx;
     if (!focused && s->v[2] > 0 && ui_iw(u, buf, len, dp, ml) <= iw) s->v[2] = 0;
@@ -10050,8 +11552,15 @@ int goome_ui_input_ex(goome_ui *u, const char *label, char *buf, int cap, int fl
     double x = ui_round(tx - s->v[2]);
     if (focused && anc != cur) {
         int lo = anc < cur ? anc : cur, hi = anc < cur ? cur : anc;
-        double x0 = ui_iw(u, buf, lo, dp, ml), x1 = ui_iw(u, buf, hi, dp, ml);
-        ui_rect(u, ui_bx(x + x0, b.y + b.h / 2 - u->lh / 2, x1 - x0, u->lh), 3, ui_c(th->select, ui_fade(th->accent, 0.32)));
+        if (!dp && ui_bd(u, buf, len)) {
+            gm_tc *bx;
+            int nb = ui_bd_lay(u, buf, len, &bx);
+            ui_bd_sel(u, bx, nb, lo, hi, x, b.y + b.h / 2 - u->lh / 2, u->lh, 3, ui_c(th->select, ui_fade(th->accent, 0.32)), 0);
+            free(bx);
+        } else {
+            double x0 = ui_iw(u, buf, lo, dp, ml), x1 = ui_iw(u, buf, hi, dp, ml);
+            ui_rect(u, ui_bx(x + x0, b.y + b.h / 2 - u->lh / 2, x1 - x0, u->lh), 3, ui_c(th->select, ui_fade(th->accent, 0.32)));
+        }
     }
     if (!len && !focused && hint && *hint) ui_text_mid(u, x, b.y + b.h / 2, hint, (int)strlen(hint), 0, th->text_dim);
     else ui_text_mid(u, x, b.y + b.h / 2, dp ? dp : buf, dp ? (int)strlen(dp) : len, 0, th->text);
@@ -11552,8 +13061,14 @@ static int ui_ed_locate(goome_ui *u, ui_ed *e, char *s, int len, int pos, double
 {
     int i = ui_ed_line(e, pos), n = ui_ed_rows_of(u, e, s, i, len), r = 0;
     while (r + 1 < n && e->rb[r + 1] <= pos) r++;
-    int rs = n ? e->rb[r] : e->ls[i];
-    if (x) *x = ui_ew(u, s, rs, pos);
+    int rs = n ? e->rb[r] : e->ls[i], re = r + 1 < n ? e->rb[r + 1] : ui_ed_lend(e, i, len);
+    if (x && ui_bd(u, s + rs, re - rs)) {
+        gm_tc *b;
+        int nb = ui_bd_lay(u, s + rs, re - rs, &b);
+        *x = ui_bd_x(b, nb, pos - rs);
+        free(b);
+    } else if (x)
+        *x = ui_ew(u, s, rs, pos);
     return e->cr[i] + r;
 }
 
@@ -11563,7 +13078,27 @@ static int ui_ed_hit_row(goome_ui *u, ui_ed *e, char *s, int len, int g, double 
     ui_ed_row_span(u, e, s, len, g, &rs, &re, &last, NULL);
     if (!last && re > rs) re = s[re - 1] == ' ' ? re - 1 : ui_u8_prev(s, re);
     if (re < rs) re = rs;
+    if (ui_bd(u, s + rs, re - rs)) {
+        gm_tc *b;
+        int nb = ui_bd_lay(u, s + rs, re - rs, &b), at = ui_bd_hit(b, nb, x);
+        free(b);
+        return rs + at;
+    }
     return ui_ehit(u, s, rs, re, x);
+}
+
+static int ui_ed_step(goome_ui *u, ui_ed *e, char *s, int len, int c, int right)
+{
+    int rs, re, last, line, g = ui_ed_locate(u, e, s, len, c, NULL);
+    ui_ed_row_span(u, e, s, len, g, &rs, &re, &last, &line);
+    int bd = ui_bd(u, s + rs, re - rs);
+    if (!bd) return right ? gm_text_next(s, c, len) : gm_text_prev(s, c);
+    gm_tc *b;
+    int nb = ui_bd_lay(u, s + rs, re - rs, &b), to = ui_bd_move(b, nb, c - rs, right);
+    free(b);
+    if (to >= 0) return rs + to;
+    if (right != (bd == 2)) return re < len && s[re] == '\n' ? re + 1 : re;
+    return rs > 0 && s[rs - 1] == '\n' ? rs - 1 : gm_text_prev(s, rs);
 }
 
 static void ui_ed_record(ui_ed *e, int pos, const char *del, int dn, const char *ins, int in, int c0, int a0, int c1, int kind)
@@ -11933,8 +13468,8 @@ int goome_ui_text_edit(goome_ui *u, const char *id, char *buf, int cap, double h
             } else if (act == GOOME_ACT_WORD_LEFT || act == GOOME_ACT_WORD_RIGHT || (act < 0 && (key == GOOME_K_LEFT || key == GOOME_K_RIGHT))) {
                 int r = act == GOOME_ACT_WORD_RIGHT || (act < 0 && key == GOOME_K_RIGHT), wd = act >= 0;
                 if (has && !sh) c = r ? hi : lo;
-                else if (r) c = wd ? ui_word_right(buf, c, len) : ui_u8_next(buf, c, len);
-                else c = wd ? ui_word_left(buf, c) : ui_u8_prev(buf, c);
+                else if (r) c = wd ? ui_word_right(buf, c, len) : ui_ed_step(u, e, buf, len, c, 1);
+                else c = wd ? ui_word_left(buf, c) : ui_ed_step(u, e, buf, len, c, 0);
             } else if ((key == GOOME_K_UP || key == GOOME_K_DOWN) && cmd && !sh) {
                 e->ty += (key == GOOME_K_UP ? -rh : rh);
                 continue;
@@ -12063,6 +13598,17 @@ int goome_ui_text_edit(goome_ui *u, const char *id, char *buf, int cap, double h
         for (int r = g - e->cr[line]; r < n && g < g1; r++, g++) {
             int rs = e->rb[r], re = r + 1 < n ? e->rb[r + 1] : lend, last = r + 1 >= n;
             double y = oy + g * rh, ty = ui_round(y + (rh - lh) / 2);
+            if (ui_bd(u, buf + rs, re - rs)) {
+                gm_tc *bx;
+                int nb = ui_bd_lay(u, buf + rs, re - rs, &bx), nl = last && lo <= re && hi > re && re < len;
+                if (hi > lo && (hi > rs || nl) && lo <= re) ui_bd_sel(u, bx, nb, lo - rs, hi - rs, ox, y, rh, 2, selc, nl ? spw : 0);
+                free(bx);
+                int z = re;
+                while (z > rs && buf[z - 1] == '\n') z--;
+                if (z > rs) ui_text(u, ox, ty, buf + rs, z - rs, 0, th->text);
+                if (nums && r == 0 && nn < 128) nl_row[nn] = g, nl_line[nn++] = line;
+                continue;
+            }
             if (hi > lo) {
                 int s0 = lo > rs ? lo : rs, s1 = hi < re ? hi : re, nl = last && lo <= re && hi > re && re < len;
                 if (s1 > s0 || nl) {
