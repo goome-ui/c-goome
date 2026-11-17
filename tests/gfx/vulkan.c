@@ -4,13 +4,18 @@
 
 #include "scene.h"
 
-#define FUNCS(X) \
+#define INST_FUNCS(X) \
     X(vkEnumeratePhysicalDevices) X(vkGetPhysicalDeviceQueueFamilyProperties) X(vkGetPhysicalDeviceMemoryProperties) \
-    X(vkGetPhysicalDeviceProperties) X(vkCreateDevice) X(vkGetDeviceQueue) X(vkCreateImage) X(vkGetImageMemoryRequirements) \
+    X(vkGetPhysicalDeviceProperties) X(vkCreateDevice) X(vkDestroyInstance)
+
+#define DEV_FUNCS(X) \
+    X(vkGetDeviceQueue) X(vkCreateImage) X(vkGetImageMemoryRequirements) \
     X(vkAllocateMemory) X(vkBindImageMemory) X(vkCreateImageView) X(vkCreateRenderPass) X(vkCreateFramebuffer) X(vkCreateBuffer) \
     X(vkGetBufferMemoryRequirements) X(vkBindBufferMemory) X(vkMapMemory) X(vkCreateCommandPool) X(vkAllocateCommandBuffers) \
     X(vkBeginCommandBuffer) X(vkEndCommandBuffer) X(vkCmdBeginRenderPass) X(vkCmdEndRenderPass) X(vkCmdCopyImageToBuffer) \
-    X(vkQueueSubmit) X(vkQueueWaitIdle) X(vkDeviceWaitIdle) X(vkDestroyDevice) X(vkDestroyInstance)
+    X(vkQueueSubmit) X(vkQueueWaitIdle) X(vkDeviceWaitIdle) X(vkDestroyDevice)
+
+#define FUNCS(X) INST_FUNCS(X) DEV_FUNCS(X)
 
 #define X(n) static PFN_##n n;
 FUNCS(X)
@@ -102,7 +107,7 @@ int main(void)
     }
 #define X(n) \
     if (gdpa(dev, #n)) n = (PFN_##n)gdpa(dev, #n);
-    FUNCS(X)
+    DEV_FUNCS(X)
 #undef X
     VkQueue q;
     vkGetDeviceQueue(dev, fam, 0, &q);

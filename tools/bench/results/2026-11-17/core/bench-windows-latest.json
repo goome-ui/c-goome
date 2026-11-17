@@ -1,0 +1,59 @@
+{
+ "meta": {
+  "date": "2026-11-17",
+  "os": "Windows-2025Server-10.0.26100-SP0",
+  "plat": "windows",
+  "runner": "GitHub Actions 1000005306",
+  "image": "20261103.298.1",
+  "arch": "AMD64",
+  "cpu": "AMD64 Family 25 Model 1 Stepping 1, AuthenticAMD",
+  "cores": 4,
+  "ram_gb": 16.0,
+  "cc": "gcc (x86_64-posix-seh-rev1, Built by MinGW-Builds project) 15.2.0",
+  "cxx": "g++ (x86_64-posix-seh-rev1, Built by MinGW-Builds project) 15.2.0",
+  "python": "3.12.10",
+  "display": null,
+  "goome_ref": "c971fac771b873beaf7eefa50000025a424235d5"
+ },
+ "libs": {
+  "goome": {
+   "version": "0.5.2",
+   "header_lines": 34127,
+   "header_bytes": 1477448,
+   "api_functions": 202,
+   "api_header_lines": 512,
+   "compile_s_Os": 10.707,
+   "stripped_bytes_Os": 437248,
+   "compile_s_O2": 15.107,
+   "stripped_bytes_O2": 616960,
+   "stripped_bytes_Os_gc": 471552,
+   "compile_s_header_only": 0.07,
+   "stripped_bytes_Os_no_ui": 256000,
+   "stripped_bytes_Os_no_draw": 71680,
+   "frame_ms_offscreen": {
+    "hello": 3.10341,
+    "dash": 4.52318,
+    "dash_idle_skip": 0.00226
+   },
+   "first_frame_offscreen": {
+    "first_frame_ms": 13.6,
+    "rss_mb": 23.01,
+    "uss_mb": 18.95,
+    "procs": 1,
+    "first_frame_min_ms": 13.5,
+    "first_frame_max_ms": 18.0,
+    "runs": 5
+   },
+   "first_frame_window": {
+    "first_frame_ms": 76.2,
+    "rss_mb": 31.27,
+    "uss_mb": 19.78,
+    "procs": 1,
+    "first_frame_min_ms": 65.2,
+    "first_frame_max_ms": 78.1,
+    "runs": 5
+   },
+   "bench_seconds": 146.4
+  }
+ }
+}

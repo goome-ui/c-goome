@@ -1,0 +1,1 @@
+{"apt": ["xvfb", "libwebkit2gtk-4.1-dev", "libsoup-3.0-dev", "libayatana-appindicator3-dev", "librsvg2-dev", "libssl-dev", "libgtk-3-dev", "libxdo-dev", "build-essential", "pkg-config", "fonts-dejavu-core"]}

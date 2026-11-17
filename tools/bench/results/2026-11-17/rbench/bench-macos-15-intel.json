@@ -1,0 +1,120 @@
+{
+ "meta": {
+  "date": "2026-11-17",
+  "os": "macOS-15.7.9-x86_64-i386-64bit",
+  "plat": "macos",
+  "runner": "GitHub Actions 1000005158",
+  "image": "20260824.0482.1",
+  "arch": "x86_64",
+  "cpu": "Intel(R) Core(TM) i7-8700B CPU @ 3.20GHz",
+  "cores": 4,
+  "ram_gb": 14.0,
+  "cc": "Apple clang version 17.0.0 (clang-1700.0.13.5)",
+  "cxx": "Apple clang version 17.0.0 (clang-1700.0.13.5)",
+  "python": "3.12.10",
+  "display": null,
+  "goome_ref": "287607046a61653bfbe2f61748583c1073dac6eb"
+ },
+ "libs": {
+  "lvgl": {
+   "version": "v9.6.0",
+   "commit": "80ca777e37a2b176770726a02e07a6fb79ef0b39",
+   "source_files_compiled": 483,
+   "compile_jobs": 4,
+   "core_lines": 42320,
+   "all_src_lines": 548058,
+   "compile_s_hello": 32.544,
+   "compile_s_hello_note": "full library from source (483 TUs, -Os) compiled with 4 parallel jobs plus link, best of 3",
+   "hello_null_output": "ok 6256337",
+   "stripped_bytes_hello_null": 464360,
+   "hello_includes": "LVGL core + widgets + default theme + Montserrat 14 + software renderer, RAM framebuffer display with no-op flush, no window system; linked with --gc-sections, clib stdlib",
+   "frame_ms": {
+    "hello": 0.1346,
+    "dash": 1.74097
+   },
+   "frame_includes": "full software render (lv_timer_handler with the screen invalidated every frame, 960x640 XRGB8888 RAM framebuffer, flush callback is a no-op); retained-mode widgets built once, so no per-frame widget submission; rows past 640px are clipped by the renderer",
+   "stripped_bytes_hello_real": 496040,
+   "real_includes": "LVGL + its lv_sdl_window driver (SDL2 software renderer), SDL2 linked dynamically and not counted",
+   "first_frame_real": {
+    "first_frame_ms": 366.4,
+    "rss_mb": 38.16,
+    "uss_mb": null,
+    "procs": 1,
+    "first_frame_min_ms": 306.2,
+    "first_frame_max_ms": 1041.9,
+    "runs": 5
+   },
+   "notes": [
+    "LVGL is retained-mode: the 50 rows are created once, per frame cost is invalidate + layout check + full software redraw of the invalidated screen",
+    "slider range is integer 0..100 (LVGL sliders are int based)",
+    "LV_USE_OS none, LV_USE_STDLIB clib, LV_COLOR_FORMAT_DEFAULT XRGB8888, default theme, Montserrat 14 font",
+    "dash rows are flex rows in a scrollable screen, only the first rows fit inside 640px, the rest are clipped",
+    "real window uses LVGL's SDL driver with SDL's software renderer"
+   ],
+   "bench_seconds": 171.7
+  },
+  "raygui": {
+   "version": "raygui 5.0 + raylib 6.2",
+   "commit": "raygui 020a61bebcbe288b4414de3416e219ef40af847a raylib 02566453880e06bec97f5b8160fa6fe1e98397ca",
+   "raylib_audio_module": "disabled (USE_AUDIO=OFF), raylib built MinSizeRel -Os, GLFW vendored",
+   "core_lines": 6460,
+   "core_lines_note": "raygui.h only; raylib itself is 59339 lines (src/*.c,h + platforms)",
+   "hello_null_exit": 0,
+   "stripped_bytes_hello_null": 162832,
+   "hello_includes": "raygui + raylib core built with PLATFORM_MEMORY (rlsw software rasterizer, memory framebuffer, no window system, no GPU), built-in font",
+   "frame_ms_memory": {
+    "hello": 0.0,
+    "dash": 0.0
+   },
+   "frame_memory_includes": "raylib PLATFORM_MEMORY: full rlsw software rasterization of 960x640 plus framebuffer copy to RAM per frame",
+   "real_attempt_errors": {
+    "Desktop": "['clang', '-std=gnu99', '-Os', '-ffunction-sections', '-fdata-sections', '-w', '-I/Users/runner/work/c-goome/c-goome/bench-work/raylib/src', '-I/Users/runner/work/c-goome/c-goome/bench-work/raygui/src', '-o', '/Users/runner/work/c-goome/c-goome/bench-work/raygui_build/hello_real', '/Users/runner/work/c-goome/c-goome/tools/bench/raygui/hello.c', '/Users/runner/work/c-goome/c-goome/bench-work/raygui_build/b_real/raylib/libraylib.a', '-Wl,-dead_strip', '-framework', 'Cocoa', '-framework', 'IOKit', '-framework', 'CoreVideo', '-framework', 'OpenGL', '-lm'] failed (1)\n\nUndefined symbols for architecture x86_64:\n  \"_OBJC_CLASS_$_CAMetalLayer\", referenced from:\n       in libraylib.a[27](cocoa_window.m.o)\nld: symbol(s) not found for architecture x86_64\nclang: error: linker command failed with exit code 1 (use -v to see invocation)\n"
+   },
+   "first_frame_real": {
+    "error": "Desktop: ['clang', '-std=gnu99', '-Os', '-ffunction-sections', '-fdata-sections', '-w', '-I/Users/runner/work/c-goome/c-goome/bench-work/raylib/src', '-I/Users/runner/work/c-goome/c-goome/bench-work/raygui/src', '-o', '/Users/runner/work/c-goome/c-goome/bench-work/raygui_build/hello_real', '/Users/runner/work/c-goome/c-goome/tools/bench/raygui/hello.c', '/Users/runner/work/c-goome/c-goome/bench-work/raygui_build/b_real/raylib/libraylib.a', '-Wl,-dead_strip', '-framework', 'Cocoa', '-framework', 'IOKit', '-framework', 'CoreVideo', '-framework', 'OpenGL', '-lm'] failed (1)\n\nUndefined symbols for architecture x86_64:\n  \"_OBJC_CLASS_$_CAMetalLayer\", referenced from:\n       in libraylib.a[27](cocoa_window.m.o)\nld: symbol(s) not found for architecture x86_64\nclang: error: linker command failed with exit code 1 (use -v to see invocation)\n"
+   },
+   "notes": [
+    "raygui is immediate mode on raylib: all 50 rows are submitted every frame, rows past 640px are drawn but clipped by the rasterizer",
+    "default raygui dark-free light style and raylib built-in bitmap font",
+    "raylib audio module disabled in the build",
+    "frame_ms measures a real window loop, rasterization cost depends on the runner's software GL"
+   ],
+   "bench_seconds": 115.0
+  },
+  "egui": {
+   "version": "0.37.0",
+   "commit": "841a328ba2dd8f6996beb7189ebb7fc00e668a2a",
+   "core_lines": 85311,
+   "core_lines_note": "rust lines in crates egui, epaint, emath, ecolor src",
+   "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+   "compile_s_hello": 262.147,
+   "compile_s_hello_note": "clean cargo build --release of hello_null including egui and all dependencies (registry sources already fetched), best of 3",
+   "hello_null_output": "ok 1",
+   "stripped_bytes_hello_null": 3048280,
+   "hello_includes": "egui + epaint + emath, default fonts and font atlas build, Context::run_ui + tessellate, no renderer and no window; opt-level=s, lto, strip",
+   "frame_ms": {
+    "hello": 0.03366,
+    "dash": 1.43321
+   },
+   "frame_includes": "ui build + layout + tessellation into triangle meshes (Context::run_ui then tessellate, 960x640, 1.0 ppp), no rasterization or GPU upload; immediate mode, all 50 rows built every frame, rows beyond 640px still laid out and tessellated",
+   "stripped_bytes_hello_real": 4327544,
+   "real_includes": "eframe 0.37 with glow backend (winit + glutin + egui_glow), static, GL libs dynamic and not counted; opt-level=s, lto, strip",
+   "first_frame_real": {
+    "first_frame_ms": 975.4,
+    "rss_mb": 48.04,
+    "uss_mb": null,
+    "procs": 1,
+    "first_frame_min_ms": 863.2,
+    "first_frame_max_ms": 1260.9,
+    "runs": 5
+   },
+   "notes": [
+    "egui frame cost excludes rasterization: it stops at tessellated meshes, a GPU or software rasterizer would add to it",
+    "headless frame loop uses egui::Context::run_ui with a 960x640 RawInput and no window",
+    "slider is 0.0..=1.0 with a drag value box",
+    "real window runs under Mesa llvmpipe on Linux and Windows (mesa-dist-win), native OpenGL on macOS"
+   ],
+   "bench_seconds": 1441.3
+  }
+ }
+}

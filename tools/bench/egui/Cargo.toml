@@ -1,0 +1,32 @@
+[package]
+name = "egui_bench"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[features]
+real = ["dep:eframe"]
+
+[dependencies]
+egui = "=0.37.0"
+eframe = { version = "=0.37.0", default-features = false, features = ["glow", "default_fonts", "x11"], optional = true }
+
+[[bin]]
+name = "hello_null"
+path = "hello_null.rs"
+
+[[bin]]
+name = "bench"
+path = "bench.rs"
+
+[[bin]]
+name = "hello_real"
+path = "hello_real.rs"
+required-features = ["real"]
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

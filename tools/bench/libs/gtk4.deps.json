@@ -1,0 +1,1 @@
+{"apt": ["xvfb", "libgtk-4-dev", "pkg-config", "fonts-dejavu-core"], "brew": ["gtk4", "pkg-config"]}
