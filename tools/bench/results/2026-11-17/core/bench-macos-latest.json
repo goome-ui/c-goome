@@ -1,0 +1,59 @@
+{
+ "meta": {
+  "date": "2026-11-17",
+  "os": "macOS-26.7.2-arm64-arm-64bit",
+  "plat": "macos",
+  "runner": "GitHub Actions 1000005027",
+  "image": "20261102.0473.1",
+  "arch": "arm64",
+  "cpu": "Apple M1 (Virtual)",
+  "cores": 3,
+  "ram_gb": 7.0,
+  "cc": "Apple clang version 21.0.0 (clang-2100.1.1.101)",
+  "cxx": "Apple clang version 21.0.0 (clang-2100.1.1.101)",
+  "python": "3.12.10",
+  "display": null,
+  "goome_ref": "54e782c105a23406e249e9f96dc9255d861bed02"
+ },
+ "libs": {
+  "goome": {
+   "version": "0.5.2",
+   "header_lines": 34127,
+   "header_bytes": 1443321,
+   "api_functions": 202,
+   "api_header_lines": 512,
+   "compile_s_Os": 4.237,
+   "stripped_bytes_Os": 494944,
+   "compile_s_O2": 4.977,
+   "stripped_bytes_O2": 610432,
+   "stripped_bytes_Os_gc": 353552,
+   "compile_s_header_only": 0.067,
+   "stripped_bytes_Os_no_ui": 322736,
+   "stripped_bytes_Os_no_draw": 105088,
+   "frame_ms_offscreen": {
+    "hello": 3.44844,
+    "dash": 4.29592,
+    "dash_idle_skip": 0.00156
+   },
+   "first_frame_offscreen": {
+    "first_frame_ms": 8.2,
+    "rss_mb": 12.2,
+    "uss_mb": null,
+    "procs": 1,
+    "first_frame_min_ms": 6.8,
+    "first_frame_max_ms": 26.1,
+    "runs": 5
+   },
+   "first_frame_window": {
+    "first_frame_ms": 329.9,
+    "rss_mb": 94.33,
+    "uss_mb": null,
+    "procs": 1,
+    "first_frame_min_ms": 218.1,
+    "first_frame_max_ms": 691.4,
+    "runs": 5
+   },
+   "bench_seconds": 91.5
+  }
+ }
+}
