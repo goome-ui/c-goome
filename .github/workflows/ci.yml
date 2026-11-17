@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches-ignore: ['bench-*', 'verify-*']
+    branches: ['**']
   pull_request:
   workflow_dispatch:
 

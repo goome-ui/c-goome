@@ -1,8 +1,6 @@
 name: bench
 
 on:
-  push:
-    branches: ["bench-*"]
   workflow_dispatch:
     inputs:
       libs:
@@ -28,6 +26,22 @@ jobs:
         run: |
           if [ -n "${{ inputs.libs }}" ]; then l="${{ inputs.libs }}"; elif [ -f tools/bench/libs.txt ]; then l=$(cat tools/bench/libs.txt | tr '\n' ' '); else l=""; fi
           echo "list=$l" >> "$GITHUB_OUTPUT"
+      - if: runner.os == 'Windows' && contains(steps.libs.outputs.list, 'qt')
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.*"
+          arch: win64_mingw
+          tools: tools_mingw1310
+      - if: runner.os == 'Windows' && contains(steps.libs.outputs.list, 'gtk4')
+        id: msys
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-gtk4 mingw-w64-x86_64-pkgconf
+      - if: runner.os == 'Windows' && contains(steps.libs.outputs.list, 'gtk4')
+        shell: bash
+        run: echo "MSYS2_ROOT=${{ steps.msys.outputs.msys2-location }}" >> "$GITHUB_ENV"
       - shell: bash
         run: python tools/bench/setup.py ${{ steps.libs.outputs.list }}
       - if: runner.os != 'Linux'

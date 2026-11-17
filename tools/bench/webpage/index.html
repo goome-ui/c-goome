@@ -1,0 +1,113 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Hello</title>
+<style>
+body { margin: 0; font: 13px sans-serif; }
+.row { display: flex; align-items: center; gap: 8px; margin: 2px 0; }
+.row > * { flex: none; }
+.row input[type=range] { width: 120px; }
+#app { padding: 8px; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+const bridge = (function () {
+  if (window.__TAURI__) {
+    const inv = window.__TAURI__.core.invoke;
+    return { mode: () => inv("mode"), ready: () => inv("ready"), report: (l) => inv("report", { line: l }), lib: "tauri" };
+  }
+  const ipc = require("electron").ipcRenderer;
+  return { mode: () => ipc.invoke("mode"), ready: () => ipc.invoke("ready"), report: (l) => ipc.invoke("report", l), lib: "electron" };
+})();
+
+const app = document.getElementById("app");
+const raf = () => new Promise((r) => requestAnimationFrame(r));
+
+function mk(tag, props) {
+  const e = document.createElement(tag);
+  Object.assign(e, props || {});
+  return e;
+}
+
+function buildHello() {
+  app.textContent = "";
+  const a = mk("div", { textContent: "hello world" });
+  const b = mk("button", { textContent: "Click me" });
+  const c = mk("div", { textContent: "clicks: 0" });
+  let n = 0;
+  b.onclick = () => { n++; c.textContent = "clicks: " + n; };
+  app.append(a, b, c);
+  return { tick: (i) => { c.textContent = "clicks: " + i; } };
+}
+
+function buildDash() {
+  app.textContent = "";
+  const rows = [];
+  for (let i = 0; i < 50; i++) {
+    const r = mk("div", { className: "row" });
+    const l = mk("span", { textContent: "row " + i });
+    const b = mk("button", { textContent: "Open" });
+    const cl = mk("label");
+    const cb = mk("input", { type: "checkbox" });
+    cl.append(cb, "On");
+    const sl = mk("label");
+    const s = mk("input", { type: "range", min: 0, max: 1, step: 0.001, value: 0.5 });
+    sl.append("Value ", s);
+    r.append(l, b, cl, sl);
+    app.append(r);
+    rows.push({ l, cb, s });
+  }
+  return {
+    tick: (i) => {
+      for (let k = 0; k < rows.length; k++) {
+        const x = rows[k];
+        x.l.textContent = "row " + k + (i & 1 ? "" : " ");
+        x.cb.checked = ((i + k) & 1) === 0;
+        x.s.value = ((i + k) % 100) / 100;
+      }
+    },
+  };
+}
+
+async function sync(scene, build, frames, warm) {
+  const s = build();
+  for (let i = 0; i < warm; i++) { s.tick(i); document.body.offsetHeight; }
+  const t = performance.now();
+  for (let i = 0; i < frames; i++) { s.tick(i); document.body.offsetHeight; }
+  return (performance.now() - t) / frames;
+}
+
+async function viaRaf(scene, build, frames, warm) {
+  const s = build();
+  for (let i = 0; i < warm; i++) { s.tick(i); await raf(); }
+  const t = performance.now();
+  for (let i = 0; i < frames; i++) { s.tick(i); await raf(); }
+  return (performance.now() - t) / frames;
+}
+
+function line(scene, frames, ms) {
+  return JSON.stringify({ lib: bridge.lib, scene, frames, ms_per_frame: +ms.toFixed(5) });
+}
+
+(async () => {
+  const mode = await bridge.mode();
+  if (mode !== "bench") {
+    buildHello();
+    await raf();
+    await raf();
+    await bridge.ready();
+    return;
+  }
+  const N = 2000, W = 100;
+  await bridge.report(line("hello", N, await sync("hello", buildHello, N, W)));
+  await bridge.report(line("dash", N, await sync("dash", buildDash, N, W)));
+  await bridge.report(line("hello_raf", N, await viaRaf("hello", buildHello, N, W)));
+  await bridge.report(line("dash_raf", N, await viaRaf("dash", buildDash, N, W)));
+  await bridge.report("DONE");
+})();
+</script>
+</body>
+</html>
