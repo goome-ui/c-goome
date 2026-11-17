@@ -32,6 +32,13 @@ jobs:
         run: WERROR=1 ./build.sh win
       - name: cmake
         run: cmake -S . -B out -DCMAKE_BUILD_TYPE=Release && cmake --build out && ctest --test-dir out --output-on-failure
+      - name: same pixels with fma
+        run: |
+          if grep -q -w fma /proc/cpuinfo; then
+            cmake -S . -B out-fma -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-march=x86-64-v3 && cmake --build out-fma --target unit && ctest --test-dir out-fma --output-on-failure
+          else
+            echo "no fma on this runner"
+          fi
       - name: backends (glfw, sdl, gl, win32 in wine)
         run: |
           sudo apt-get install -yq pkgconf libglfw3-dev libsdl2-dev libgl-dev libegl-dev libgles-dev libgl1-mesa-dri wine wine64
@@ -228,7 +235,7 @@ jobs:
           #include "backends/goome_vulkan.h"
           EOF2
           export VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation
-          export VK_LAYER_ENABLES=VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT
+          export VK_LAYER_VALIDATE_SYNC=1
           export VK_ICD_FILENAMES=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json | head -1)
           build/gfx_vulkan 2>&1 | tee vk.log
           if grep -i -E "validation (error|warning)|VUID-|SYNC-HAZARD" vk.log; then exit 1; fi

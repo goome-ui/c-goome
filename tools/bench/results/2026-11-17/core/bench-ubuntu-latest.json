@@ -1,0 +1,64 @@
+{
+ "meta": {
+  "date": "2026-11-17",
+  "os": "Linux-7.0.0-1017-azure-x86_64-with-glibc2.39",
+  "plat": "linux",
+  "runner": "GitHub Actions 1000005308",
+  "image": "20261111.370.1",
+  "arch": "x86_64",
+  "cpu": "AMD EPYC 9V45 96-Core Processor",
+  "cores": 4,
+  "ram_gb": 15.6,
+  "cc": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+  "cxx": "g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+  "python": "3.12.16",
+  "display": ":99",
+  "goome_ref": "c971fac771b873beaf7eefa50000025a424235d5"
+ },
+ "libs": {
+  "goome": {
+   "version": "0.5.2",
+   "header_lines": 34127,
+   "header_bytes": 1443321,
+   "api_functions": 202,
+   "api_header_lines": 512,
+   "compile_s_Os": 6.238,
+   "stripped_bytes_Os": 598528,
+   "compile_s_O2": 8.234,
+   "stripped_bytes_O2": 766336,
+   "stripped_bytes_Os_gc": 455168,
+   "compile_s_header_only": 0.025,
+   "stripped_bytes_Os_no_ui": 393216,
+   "stripped_bytes_Os_no_draw": 204792,
+   "ldd": [
+    "linux-vdso.so.1 (0x00007f9f129ed000)",
+    "libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007f9f12600000)",
+    "/lib64/ld-linux-x86-64.so.2 (0x00007f9f129ef000)"
+   ],
+   "frame_ms_offscreen": {
+    "hello": 1.8731,
+    "dash": 2.62889,
+    "dash_idle_skip": 0.00139
+   },
+   "first_frame_offscreen": {
+    "first_frame_ms": 5.4,
+    "rss_mb": 5.79,
+    "uss_mb": 3.12,
+    "procs": 1,
+    "first_frame_min_ms": 5.3,
+    "first_frame_max_ms": 5.8,
+    "runs": 5
+   },
+   "first_frame_window": {
+    "first_frame_ms": 35.6,
+    "rss_mb": 8.2,
+    "uss_mb": 4.18,
+    "procs": 1,
+    "first_frame_min_ms": 35.1,
+    "first_frame_max_ms": 52.4,
+    "runs": 5
+   },
+   "bench_seconds": 87.3
+  }
+ }
+}

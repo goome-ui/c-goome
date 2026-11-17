@@ -1,0 +1,1 @@
+{"apt": ["xvfb", "libglfw3-dev", "libgl1-mesa-dev", "libgl1-mesa-dri", "libglx-mesa0", "mesa-utils"], "brew": ["glfw"]}

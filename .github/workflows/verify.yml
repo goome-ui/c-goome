@@ -1,0 +1,207 @@
+name: verify
+
+on:
+  workflow_dispatch:
+
+env:
+  VERIFY_OUT: ${{ github.workspace }}/verify-out
+
+jobs:
+  wayland-ubuntu:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        comp: [sway, weston-desktop, weston-kiosk, weston-headless, cage, labwc, wayfire, river, niri, kwin, mutter, hyprland]
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash tools/verify/deps.sh wl ${{ matrix.comp }}
+      - run: DISTRO=ubuntu-24.04 bash tools/verify/wayland.sh ${{ matrix.comp }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verify-wayland-ubuntu-${{ matrix.comp }}
+          path: verify-out/
+          if-no-files-found: ignore
+
+  wayland-arch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    container:
+      image: archlinux:latest
+    strategy:
+      fail-fast: false
+      matrix:
+        comp: [sway, weston-desktop, weston-kiosk, weston-headless, cage, labwc, wayfire, river, niri, kwin, mutter, hyprland]
+    steps:
+      - uses: actions/checkout@v4
+      - run: DISTRO=arch bash tools/verify/deps.sh wl ${{ matrix.comp }}
+      - run: |
+          pacman -S --noconfirm --needed libcap >/dev/null 2>&1; useradd -m tester
+          mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
+          dbus-uuidgen --ensure
+          chown -R tester .
+          for b in sway labwc wayfire river kwin_wayland Hyprland niri cage weston; do if p=$(command -v $b); then setcap -r $p 2>/dev/null || true; fi; done; runuser -u tester -- env DISTRO=arch VERIFY_OUT=$PWD/verify-out bash tools/verify/wayland.sh ${{ matrix.comp }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verify-wayland-arch-${{ matrix.comp }}
+          path: verify-out/
+          if-no-files-found: ignore
+
+  x11:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        wm: [none, openbox, i3, xfwm4, xfwm4-picom, metacity, marco, mutter-x11, kwin-x11, fluxbox, icewm]
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash tools/verify/deps.sh x11 ${{ matrix.wm }}
+      - run: bash tools/verify/x11wm.sh ${{ matrix.wm }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verify-x11-${{ matrix.wm }}
+          path: verify-out/
+          if-no-files-found: ignore
+
+  orca:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash tools/verify/deps.sh orca orca
+      - run: bash tools/verify/orca.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verify-orca
+          path: verify-out/
+          if-no-files-found: ignore
+
+  ime-x11:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        eng: [ibus-libpinyin, ibus-mozc, ibus-anthy, fcitx5-pinyin, fcitx5-mozc, fcitx5-anthy]
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash tools/verify/deps.sh imex ${{ matrix.eng }}
+      - run: bash tools/verify/ime_x11.sh ${{ matrix.eng }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verify-imex-${{ matrix.eng }}
+          path: verify-out/
+          if-no-files-found: ignore
+
+  ime-wayland:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        eng: [fcitx5-pinyin, fcitx5-mozc, ibus-libpinyin]
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash tools/verify/deps.sh imewl ${{ matrix.eng }}
+      - run: bash tools/verify/ime_wl.sh ${{ matrix.eng }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verify-imewl-${{ matrix.eng }}
+          path: verify-out/
+          if-no-files-found: ignore
+
+  unit-count:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          python3 tools/verify/unitcount.py tests/unit_counted.c
+          ./build.sh
+          cc -std=c99 -O1 -w -Iinclude -Isrc -Itests -o build/unit_counted tests/unit_counted.c build/libgoome.a -lm
+          bash tools/verify/unitrun.sh build/unit_counted
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verify-unit-${{ matrix.os }}
+          path: verify-out/
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: unit count
+        shell: bash
+        run: |
+          python tools/verify/unitcount.py tests/unit_counted.c
+          CC=gcc ./build.sh win
+          gcc -std=c99 -O1 -w -Iinclude -Isrc -Itests -o build-win/unit_counted.exe tests/unit_counted.c build-win/libgoome.a
+          bash tools/verify/unitrun.sh build-win/unit_counted.exe
+          gcc -std=c99 -O2 -w -Iinclude -o build-win/a11y_app.exe tests/a11y_app.c build-win/libgoome.a
+          gcc -std=c99 -O2 -w -Iinclude -o build-win/ime_ui.exe tests/ime_ui.c build-win/libgoome.a
+      - name: screen readers
+        shell: pwsh
+        run: ./tools/verify/win_nvda.ps1 -out verify-out/nvda
+        continue-on-error: true
+      - name: ime
+        shell: pwsh
+        run: ./tools/verify/win_ime.ps1 -out verify-out/ime
+        continue-on-error: true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verify-windows
+          path: verify-out/
+
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: voiceover
+        run: bash tools/verify/mac_vo.sh
+        continue-on-error: true
+      - name: ime
+        run: bash tools/verify/mac_ime.sh
+        continue-on-error: true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verify-macos-${{ matrix.os }}
+          path: verify-out/
+
+  merge:
+    needs: [wayland-ubuntu, wayland-arch, x11, orca, ime-x11, ime-wayland, unit-count, windows, macos]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: verify-*
+          path: parts
+      - run: |
+          mkdir -p final
+          python3 tools/verify/merge.py parts final/verify-results.json
+          cp tools/verify/ci-facts.json final/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verify-final
+          path: final/

@@ -1,0 +1,182 @@
+{
+ "meta": {
+  "date": "2026-11-17",
+  "os": "Windows-2025Server-10.0.26100-SP0",
+  "plat": "windows",
+  "runner": "GitHub Actions 1000005120",
+  "image": "20261103.298.1",
+  "arch": "AMD64",
+  "cpu": "AMD64 Family 25 Model 1 Stepping 1, AuthenticAMD",
+  "cores": 4,
+  "ram_gb": 16.0,
+  "cc": "gcc (x86_64-posix-seh-rev1, Built by MinGW-Builds project) 13.1.0",
+  "cxx": "g++ (x86_64-posix-seh-rev1, Built by MinGW-Builds project) 13.1.0",
+  "python": "3.15.2",
+  "display": null,
+  "goome_ref": "38dde96c897c84a07932b762afb90397b4d4349f"
+ },
+ "libs": {
+  "qt": {
+   "version": "6.8.3",
+   "compile_s_hello": 2.431,
+   "deploy_dir_bytes": 32939799,
+   "qt_dlls_bytes": 32739640,
+   "commit": "6.8.3",
+   "stripped_bytes_hello_null": 47631,
+   "hello_includes": "QApplication + QLabel/QPushButton/QVBoxLayout hello, stripped binary only, shared Qt not included, offscreen platform plugin not linked (loaded at run time)",
+   "stripped_bytes_hello_real": 47631,
+   "real_includes": "same binary; dynamic Qt: see shared_libs_* for the libraries it needs (dynamic linking is how Qt is shipped)",
+   "shared_libs_bytes_all": 32939799,
+   "shared_libs_matching": "windeployqt output dir (includes both hello.exe and bench.exe copies and platform/style plugins)",
+   "static_qt": {
+    "na": "no static Qt is installable cheaply: apt qt6-base-dev, brew qt and install-qt-action all ship shared builds only, building static Qt from source takes 30+ min and several GB per OS"
+   },
+   "qml_hello": {
+    "na": "skipped, Quick would add QtQml/QtQuick and a GPU-less scene graph path, widgets scene only"
+   },
+   "frame_ms_offscreen": {
+    "hello": 0.08453,
+    "dash": 3.08467
+   },
+   "frame_includes": "widget geometry updates + layout + QWidget::render into QImage ARGB32 via the raster paint engine (software rasterization, offscreen platform), 100 warmup + 2000 frames per scene",
+   "first_frame_offscreen": {
+    "first_frame_ms": 25.9,
+    "rss_mb": 18.18,
+    "uss_mb": 9.52,
+    "procs": 1,
+    "first_frame_min_ms": 24.0,
+    "first_frame_max_ms": 26.1,
+    "runs": 5
+   },
+   "first_frame_real": {
+    "first_frame_ms": 93.5,
+    "rss_mb": 30.81,
+    "uss_mb": 12.5,
+    "procs": 1,
+    "first_frame_min_ms": 90.9,
+    "first_frame_max_ms": 516.4,
+    "runs": 5
+   },
+   "bench_src_lines": 145,
+   "notes": [
+    "dash window grows to the layout minimum size, render target is the widget size",
+    "frame bench renders through QWidget::render, not a presented window, no compositor or vsync",
+    "compile_s_hello is a cmake/ninja clean rebuild of the hello target only (Qt headers, not Qt itself), best of 3"
+   ],
+   "bench_seconds": 37.1
+  },
+  "gtk4": {
+   "version": "4.24.0",
+   "commit": "4.24.0",
+   "compile_s_hello": 0.655,
+   "stripped_bytes_hello_null": 41472,
+   "hello_includes": "gtk_application_window with label/button/label, stripped binary only (GTK has no null backend, it needs a display at run time), shared GTK not included",
+   "stripped_bytes_hello_real": 41472,
+   "real_includes": "same binary, see shared_libs_* for the libraries needed",
+   "shared_libs_count": 60,
+   "shared_libs_bytes_all": 44787252,
+   "shared_libs_bytes_matching": 24548732,
+   "shared_libs_matching": "gtk, gdk, glib, gobject, gio, pango, cairo, graphene, harfbuzz, epoxy, pixbuf libraries",
+   "static_gtk": {
+    "na": "GTK4 is not built or packaged statically on any of the three package managers"
+   },
+   "frame_ms_cairo": {
+    "hello": 0.23421,
+    "dash": 9.9327
+   },
+   "first_frame_real": {
+    "first_frame_ms": 398.1,
+    "rss_mb": 87.43,
+    "uss_mb": 29.91,
+    "procs": 2,
+    "first_frame_min_ms": 373.6,
+    "first_frame_max_ms": 925.7,
+    "runs": 5
+   },
+   "frame_includes": "mapped window, per frame: widget updates + gtk_widget_measure + gtk_widget_allocate + widget snapshot to a GskRenderNode + gsk_render_node_draw into a cairo ARGB32 image (software cairo rasterization, no presentation, no frame clock), 100 warmup + 2000 frames per scene",
+   "bench_src_lines": 182,
+   "notes": [
+    "GSK_RENDERER=cairo for first_frame_real so no GPU is needed",
+    "dash is 50 rows of label, button, check button, scale, a Value label, in a vertical box clipped to a 960x640 surface",
+    "compile_s_hello is plain gcc -Os of hello.c against the GTK headers, best of 3"
+   ],
+   "bench_seconds": 40.5
+  },
+  "electron": {
+   "npm_install_s": 13.3,
+   "version": "45.3.3",
+   "commit": "v45.3.3",
+   "install_bytes_real": 374394730,
+   "real_includes": "node_modules/electron/dist (Chromium + Node runtime, locales, ffmpeg, resources), unstripped as shipped",
+   "electron_binary_bytes": 250093056,
+   "stripped_bytes_hello_null": {
+    "na": "Electron has no headless or null backend, every app is the full Chromium runtime, see install_bytes_real"
+   },
+   "hello_includes": "n/a, hello is index.html (about 3 KB) + main.js loaded by the stock electron binary",
+   "compile_s_hello": {
+    "na": "no compile step, the app is interpreted JS and HTML"
+   },
+   "frame_ms_dom": {
+    "hello": 0.01845,
+    "dash": 1.35995,
+    "hello_raf": 0.45955,
+    "dash_raf": 4.5713
+   },
+   "frame_includes": "retained DOM: hello and dash scenes mutate existing nodes (50 rows of span, button, checkbox, range input) then force style+layout via offsetHeight, no paint, measured with performance.now; the *_raf scenes do the same mutation then await requestAnimationFrame and include paint and composite (software compositing on Linux, frame limit and vsync disabled via switches, may still be display capped, read the numbers accordingly); 100 warmup + 2000 frames",
+   "first_frame_real": {
+    "first_frame_ms": 309.9,
+    "rss_mb": 275.18,
+    "uss_mb": 85.27,
+    "procs": 4,
+    "first_frame_min_ms": 299.0,
+    "first_frame_max_ms": 321.4,
+    "runs": 5
+   },
+   "first_frame_includes": "process start to the renderer having painted twice via requestAnimationFrame and reporting over IPC, rss_mb sums the main process and all child processes",
+   "bench_src_lines": 149,
+   "notes": [
+    "Linux runs with --no-sandbox and --disable-gpu (xvfb, no GPU)",
+    "window size 960x640 for both scenes, nodeIntegration on to reach ipcRenderer",
+    "dash rows are inline-flex style rows, the 50 rows overflow 640 px and scroll, all are laid out"
+   ],
+   "bench_seconds": 45.2
+  },
+  "tauri": {
+   "compile_s_hello": 314.5,
+   "compile_runs": 1,
+   "compile_includes": "full cold cargo build --release including tauri, wry, tao and all dependencies, single run",
+   "version": "2.12.6",
+   "commit": "tauri 2.12.6 from crates.io",
+   "stripped_bytes_hello_real": 3113984,
+   "real_includes": "release binary (opt-level=s, lto, strip, panic=abort) with the html embedded, system webview NOT included (WebKitGTK / WebView2 / WKWebView come from the OS)",
+   "stripped_bytes_hello_null": {
+    "na": "Tauri has no headless backend, the only binary is the one with the system webview linked or loaded, see stripped_bytes_hello_real"
+   },
+   "hello_includes": "see real_includes",
+   "frame_ms_dom": {
+    "hello": 0.0201,
+    "dash": 1.31865,
+    "hello_raf": 15.6255,
+    "dash_raf": 15.625
+   },
+   "frame_includes": "retained DOM: hello and dash scenes mutate existing nodes (50 rows of span, button, checkbox, range input) then force style+layout via offsetHeight, no paint, measured with performance.now; the *_raf scenes do the same mutation then await requestAnimationFrame and include paint and composite in the system webview (frame rate may be display capped at 60 Hz, read the numbers accordingly); 100 warmup + 2000 frames",
+   "first_frame_real": {
+    "first_frame_ms": 553.1,
+    "rss_mb": 287.17,
+    "uss_mb": 119.04,
+    "procs": 7,
+    "first_frame_min_ms": 524.4,
+    "first_frame_max_ms": 800.2,
+    "runs": 5
+   },
+   "first_frame_includes": "process start to the page having painted twice via requestAnimationFrame and reporting through invoke, rss_mb sums the app and all webview child processes (WebView2 msedgewebview2 children are only counted when spawned under the app process tree)",
+   "bench_src_lines": 142,
+   "notes": [
+    "window size 960x640, same html page as the electron lib",
+    "no cargo-tauri CLI, plain tauri crate with generate_context and an embedded frontendDist",
+    "Linux sets WEBKIT_DISABLE_COMPOSITING_MODE and WEBKIT_DISABLE_DMABUF_RENDERER for xvfb"
+   ],
+   "bench_seconds": 404.7
+  }
+ }
+}

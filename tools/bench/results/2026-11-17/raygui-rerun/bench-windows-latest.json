@@ -1,0 +1,57 @@
+{
+ "meta": {
+  "date": "2026-11-17",
+  "os": "Windows-2025Server-10.0.26100-SP0",
+  "plat": "windows",
+  "runner": "GitHub Actions 1000005337",
+  "image": "20261103.298.1",
+  "arch": "AMD64",
+  "cpu": "AMD64 Family 25 Model 1 Stepping 1, AuthenticAMD",
+  "cores": 4,
+  "ram_gb": 16.0,
+  "cc": "gcc (x86_64-posix-seh-rev1, Built by MinGW-Builds project) 15.2.0",
+  "cxx": "g++ (x86_64-posix-seh-rev1, Built by MinGW-Builds project) 15.2.0",
+  "python": "3.12.10",
+  "display": null,
+  "goome_ref": "b19274fdd7c7b5518a1e49b98c014566418540a8"
+ },
+ "libs": {
+  "raygui": {
+   "version": "raygui 5.0 + raylib 6.2",
+   "commit": "raygui 020a61bebcbe288b4414de3416e219ef40af847a raylib 02566453880e06bec97f5b8160fa6fe1e98397ca",
+   "raylib_audio_module": "disabled (USE_AUDIO=OFF), raylib built MinSizeRel -Os, GLFW vendored",
+   "core_lines": 6460,
+   "core_lines_note": "raygui.h only; raylib itself is 59339 lines (src/*.c,h + platforms)",
+   "hello_null_exit": 0,
+   "stripped_bytes_hello_null": 636928,
+   "hello_includes": "raygui + raylib core built with PLATFORM_MEMORY (rlsw software rasterizer, memory framebuffer, no window system, no GPU), built-in font",
+   "frame_ms_memory": {
+    "hello": 1.43246,
+    "dash": 5.86607
+   },
+   "frame_memory_includes": "raylib PLATFORM_MEMORY: full rlsw software rasterization of 960x640 plus framebuffer copy to RAM per frame",
+   "compile_s_hello": 22.002,
+   "compile_s_hello_note": "raylib 6.2 from source via cmake (Win32, -j4) + hello with raygui implementation, best of 3",
+   "stripped_bytes_hello_real": 655360,
+   "real_includes": "raygui + raylib static with native Win32 platform and rlsw software renderer (GDI present)",
+   "mesa": {
+    "mesa_dist_win": "26.2.7"
+   },
+   "real_backend": "Win32",
+   "real_attempt_errors": {
+    "Desktop": "no READY from ['D:\\\\a\\\\c-goome\\\\c-goome\\\\bench-work\\\\raygui_build\\\\hello_real.exe'], stderr: ",
+    "Win32": "no READY from ['D:\\\\a\\\\c-goome\\\\c-goome\\\\bench-work\\\\raygui_build\\\\hello_real.exe'], stderr: "
+   },
+   "first_frame_real": {
+    "error": "Desktop: no READY from ['D:\\\\a\\\\c-goome\\\\c-goome\\\\bench-work\\\\raygui_build\\\\hello_real.exe'], stderr: ; Win32: no READY from ['D:\\\\a\\\\c-goome\\\\c-goome\\\\bench-work\\\\raygui_build\\\\hello_real.exe'], stderr: "
+   },
+   "notes": [
+    "raygui is immediate mode on raylib: all 50 rows are submitted every frame, rows past 640px are drawn but clipped by the rasterizer",
+    "default raygui dark-free light style and raylib built-in bitmap font",
+    "raylib audio module disabled in the build",
+    "frame_ms measures a real window loop, rasterization cost depends on the runner's software GL"
+   ],
+   "bench_seconds": 264.2
+  }
+ }
+}

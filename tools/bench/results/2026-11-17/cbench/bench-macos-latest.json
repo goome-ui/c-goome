@@ -1,0 +1,147 @@
+{
+ "meta": {
+  "date": "2026-11-17",
+  "os": "macOS-26.7.2-arm64-arm-64bit",
+  "plat": "macos",
+  "runner": "GitHub Actions 1000005244",
+  "image": "20261112.0504.1",
+  "arch": "arm64",
+  "cpu": "Apple M1 (Virtual)",
+  "cores": 3,
+  "ram_gb": 7.0,
+  "cc": "Apple clang version 21.0.0 (clang-2100.1.1.101)",
+  "cxx": "Apple clang version 21.0.0 (clang-2100.1.1.101)",
+  "python": "3.12.10",
+  "display": null,
+  "goome_ref": "e52a4fef2c3f46dd64b2f7272ac873480e89e74d"
+ },
+ "libs": {
+  "imgui": {
+   "version": "v1.93.0",
+   "commit": "c1aaac65e896a45f81f47a4d68f9959e0f86c859",
+   "core_loc": 51785,
+   "compile_s_hello": 6.931,
+   "stripped_bytes_hello_null": 431248,
+   "frame_ms": {
+    "hello": 0.0021,
+    "dash": 0.0283
+   },
+   "frame_ms_O2": {
+    "hello": 0.00182,
+    "dash": 0.02484
+   },
+   "hello_includes": "imgui core (imgui, draw, tables, widgets) + built-in font atlas via io.Fonts->GetTexDataAsRGBA32, no backend, no renderer",
+   "frame_includes": "NewFrame + widgets + Render into draw lists (ImDrawData), no rasterization and no backend",
+   "real_includes": "imgui core + imgui_impl_glfw + imgui_impl_opengl3 + glfw (see glfw_source); exe size excludes shared glfw/GL libs on Linux and macOS",
+   "glfw_lib_bytes": 246960,
+   "glfw_source": "brew glfw, shared libglfw.3.dylib, system OpenGL framework",
+   "stripped_bytes_hello_real": 454592,
+   "first_frame_real": {
+    "na": "glfwCreateWindow fails on GitHub macOS runners with NSGL: Failed to find a suitable pixel format (tried core 3.2 and default legacy contexts, the VM has no usable OpenGL); on the arm64 runner the attempt also hung for 30 minutes, so it is not run"
+   },
+   "notes": [
+    "ImGui is an immediate-mode library that only builds draw lists, the null numbers include no GPU or rasterization work",
+    "window is 960x640 for dash; imgui culls vertex generation for rows outside the window clip rect but the widget code still runs for all 50 rows",
+    "io.IniFilename is disabled, DeltaTime fixed at 1/60, no mouse input is fed",
+    "the Value label is drawn to the right of each slider, ImGui's default",
+    "built with -std=gnu++11 -Os (frame_ms) and -O2 (frame_ms_O2) with -ffunction-sections and gc-sections; Windows links libstdc++ and libgcc statically",
+    "the real window hello uses the standard GLFW + OpenGL3 backends with swap interval 0 and READY printed after the first SwapBuffers"
+   ],
+   "bench_seconds": 56.2
+  },
+  "nuklear": {
+   "version": "v4.13.4",
+   "commit": "f101764f7a2ec99e0db7895d148069eda96cce2b",
+   "core_loc": 31467,
+   "compile_s_hello": 2.251,
+   "stripped_bytes_hello_null": 138304,
+   "frame_ms": {
+    "hello": 0.01115,
+    "dash": 0.20802
+   },
+   "frame_ms_O2": {
+    "hello": 0.01475,
+    "dash": 0.20243
+   },
+   "hello_includes": "nuklear.h implementation with default font baking (stb_truetype + ProggyClean) and atlas bake to RGBA32, nk_init_default, no renderer",
+   "frame_includes": "ui build + nk_convert into vertex/element/command buffers + draw command walk, no rasterization",
+   "stripped_bytes_hello_real": {
+    "na": "optional, not built: Nuklear's GLFW/SDL demo backends were skipped"
+   },
+   "first_frame_real": {
+    "na": "optional, not built: Nuklear has no windowing code"
+   },
+   "notes": [
+    "nk_convert runs with anti-aliasing on, which is Nuklear's default demo setting and costs extra vertices",
+    "font atlas is baked once at startup (included in hello size and compile time, excluded from per-frame time)",
+    "dash row uses a 4 column row template; Nuklear sliders have no label so the Value label is not drawn",
+    "all 50 dash rows are submitted every frame; Nuklear skips drawing widgets that fall outside the window",
+    "built with -std=gnu99 -Os (frame_ms) and -O2 (frame_ms_O2) with -ffunction-sections and gc-sections"
+   ],
+   "bench_seconds": 17.2
+  },
+  "microui": {
+   "version": "HEAD (no releases or tags)",
+   "commit": "0850aba860959c3e75fb3e97120ca92957f9d057",
+   "core_loc": 1504,
+   "compile_s_hello": 0.278,
+   "stripped_bytes_hello_null": 35296,
+   "frame_ms": {
+    "hello": 0.0003,
+    "dash": 0.02112
+   },
+   "frame_ms_O2": {
+    "hello": 0.00026,
+    "dash": 0.01857
+   },
+   "hello_includes": "microui.c + hello scene + command iteration, no renderer, no font (text width callback is a fixed 8px per char stub)",
+   "frame_includes": "ui build + command list iteration via mu_next_command, no rasterization",
+   "stripped_bytes_hello_real": {
+    "na": "optional, not built: microui ships only an SDL2 demo with its own atlas renderer"
+   },
+   "first_frame_real": {
+    "na": "optional, not built: microui has no windowing code"
+   },
+   "notes": [
+    "microui has no font: the text width/height callbacks are fixed-size stubs (8px wide, 16px tall), so text measurement is cheaper than a real font",
+    "hello and dash windows use the default microui theme; sliders and checkboxes are drawn in the command list, the Value label is not drawn (mu_slider has no label)",
+    "all 50 dash rows are submitted every frame; microui clips commands to the window rect but still runs layout for hidden rows",
+    "built with -std=gnu99 -Os (frame_ms) and -O2 (frame_ms_O2) with -ffunction-sections and gc-sections"
+   ],
+   "bench_seconds": 2.3
+  },
+  "clay": {
+   "version": "v0.14",
+   "commit": "b25a31c1a152915cd7dd6796e6592273e5a10aac",
+   "core_loc": 4393,
+   "compile_s_hello": 0.831,
+   "stripped_bytes_hello_null": 92736,
+   "frame_ms": {
+    "hello": 0.00144,
+    "dash": 0.09709
+   },
+   "frame_ms_O2": {
+    "hello": 0.00073,
+    "dash": 0.04366
+   },
+   "hello_includes": "clay.h implementation + hello layout + render command array, no renderer, no font (measure text callback is a fixed 8px per char stub)",
+   "frame_includes": "layout build + Clay_EndLayout render command array, no rasterization",
+   "stripped_bytes_hello_real": {
+    "na": "Clay is a layout library with no windowing or renderer in the core"
+   },
+   "first_frame_real": {
+    "na": "Clay is a layout library with no windowing or renderer in the core"
+   },
+   "notes": [
+    "Clay has no input widgets: buttons, checkboxes and sliders in the scenes are plain layout boxes with text and colored rectangles, with no hover, click or drag handling",
+    "checkbox and slider state is drawn from plain arrays, there is no interaction code to measure",
+    "row labels are formatted with snprintf every frame because Clay text needs memory that outlives the layout pass",
+    "Clay has no font: the measure text callback is a fixed-size stub (8px per char)",
+    "Clay output is a command array of rectangles and text, a renderer would still have to draw it",
+    "all 50 dash rows are submitted every frame; Clay lays them all out but leaves offscreen elements out of the command array",
+    "built with -std=gnu99 -Os (frame_ms) and -O2 (frame_ms_O2) with -ffunction-sections and gc-sections"
+   ],
+   "bench_seconds": 7.0
+  }
+ }
+}

@@ -1,0 +1,711 @@
+[
+ {
+  "cell": "ime:linux-wayland-sway:fcitx5-mozc",
+  "ran": true,
+  "result": "fail",
+  "detail": "sway; 5.1.7; wanted にほんご|日本語 and preedit; goome 'ime rc 0 no error'; preedit: '' committed: ''; ime.log: key h|key o|key n|key g|key o|buf nihongo|key  |buf nihongo | | im: [1322277.187] wl_keyboard@19.keymap(1, fd 8, 64756)|D2026-11-17 17:34:34.752348 waylandmodule.cpp:156] Update keymap|[1322277.232] wl_keyboard@19.repeat_info(25, 600)|[1322277.234] wl_keyboard@19.keymap(1, fd 14, 22573)|D2026-11-17 17:34:34.752372 waylandmodule.cpp:156] Update keymap|D2026-11-17 17:34:34.752385 waylandeventreader.cpp:23] wl_display_flush|D2026-11-17 17:34:34.816320 waylandmodule.cpp:415] Try to reload Xkb option from desktop|D2026-11-17 17:34:34.816351 waylandeventreader.cpp:23] wl_display_flush| | err ",
+  "version": "5.1.7"
+ },
+ {
+  "cell": "ime:linux-wayland-sway:fcitx5-pinyin",
+  "ran": true,
+  "result": "fail",
+  "detail": "sway; 5.1.7; wanted 你好 and preedit; goome 'ime rc 0 no error'; preedit: '' committed: ''; ime.log: key n|key i|key h|key a|key o|buf nihao|key  |buf nihao | | im: [1310179.263] wl_keyboard@19.keymap(1, fd 21, 64756)|D2026-11-17 17:34:22.654424 waylandmodule.cpp:156] Update keymap|[1310179.311] wl_keyboard@19.repeat_info(25, 600)|[1310179.314] wl_keyboard@19.keymap(1, fd 22, 22573)|D2026-11-17 17:34:22.654452 waylandmodule.cpp:156] Update keymap|D2026-11-17 17:34:22.654466 waylandeventreader.cpp:23] wl_display_flush|D2026-11-17 17:34:22.743543 waylandmodule.cpp:415] Try to reload Xkb option from desktop|D2026-11-17 17:34:22.743580 waylandeventreader.cpp:23] wl_display_flush| | err ",
+  "version": "5.1.7"
+ },
+ {
+  "cell": "ime:linux-wayland-sway:ibus-libpinyin",
+  "ran": true,
+  "result": "fail",
+  "detail": "sway; IBus 1.5.29-rc2; wanted 你好 and preedit; goome 'ime rc 0 no error'; preedit: '' committed: ''; ime.log: key n|key i|key h|key a|key o|buf nihao|key  |buf nihao | | im: |(process:4498): IBUS-WARNING **: 17:34:35.710: ibus_bus_call_sync: org.freedesktop.IBus.SetGlobalEngine: GDBus.Error:org.freedesktop.DBus.Error.Failed: Set global engine failed: Timeout was reached|Set global engine failed.| | err ",
+  "version": "IBus 1.5.29-rc2"
+ },
+ {
+  "cell": "ime:linux-x11:fcitx5-anthy",
+  "ran": true,
+  "result": "fail",
+  "detail": "5.1.7; engine anthy; wanted にほんご|日本語; XIM_SERVERS: /home/runner/work/c-goome/c-goome/verify-out/imex-fcitx5-anthy/fcitx5.log:XIM_SERVERS(ATOM) = @server=fcitx; goome 'ime rc -1 no X input method here'; preedit:  committed: ''; ime.log tail: key o|buf niho|key n|buf nihon|key g|buf nihong|key o|buf nihongo| | im log: I2026-11-17 17:34:27.201451 kimpanel.cpp:116] Kimpanel new owner: |I2026-11-17 17:34:27.201477 virtualkeyboard.cpp:223] VirtualKeyboard new owner: |E2026-11-17 17:34:27.201512 portalsettingmonitor.cpp:115] DBus call error: org.freedesktop.DBus.Error.ServiceUnknown The name org.freedesktop.portal.Desktop was not provided by any .service files|I2026-11-17 17:34:28.324530 addonmanager.cpp:195] Loaded addon anthy|fcitx5-remote now: |XIM_SERVERS(ATOM) = @server=fcitx| engines:  | err: ",
+  "version": "5.1.7"
+ },
+ {
+  "cell": "ime:linux-x11:fcitx5-mozc",
+  "ran": true,
+  "result": "fail",
+  "detail": "5.1.7; engine mozc; wanted にほんご|日本語; XIM_SERVERS: /home/runner/work/c-goome/c-goome/verify-out/imex-fcitx5-mozc/fcitx5.log:XIM_SERVERS(ATOM) = @server=fcitx; goome 'ime rc -1 no X input method here'; preedit:  committed: ''; ime.log tail: key o|buf niho|key n|buf nihon|key g|buf nihong|key o|buf nihongo| | im log: I2026-11-17 17:34:10.751890 kimpanel.cpp:116] Kimpanel new owner: |I2026-11-17 17:34:10.751920 virtualkeyboard.cpp:223] VirtualKeyboard new owner: |E2026-11-17 17:34:10.751961 portalsettingmonitor.cpp:115] DBus call error: org.freedesktop.DBus.Error.ServiceUnknown The name org.freedesktop.portal.Desktop was not provided by any .service files|I2026-11-17 17:34:12.055760 addonmanager.cpp:195] Loaded addon mozc|fcitx5-remote now: |XIM_SERVERS(ATOM) = @server=fcitx| engines:  | err: ",
+  "version": "5.1.7"
+ },
+ {
+  "cell": "ime:linux-x11:fcitx5-pinyin",
+  "ran": true,
+  "result": "fail",
+  "detail": "5.1.7; engine pinyin; wanted 你好; XIM_SERVERS: /home/runner/work/c-goome/c-goome/verify-out/imex-fcitx5-pinyin/fcitx5.log:XIM_SERVERS(ATOM) = @server=fcitx; goome 'ime rc -1 no X input method here'; preedit:  committed: ''; ime.log tail: key h|buf nih|key a|buf niha|key o|buf nihao|key  |buf nihao | | im log: I2026-11-17 17:33:28.256132 addonmanager.cpp:195] Loaded addon punctuation|E2026-11-17 17:33:28.350661 pinyin.cpp:986] Failed to load pinyin history: io fail: iostream error|I2026-11-17 17:33:28.364840 addonmanager.cpp:195] Loaded addon pinyin|I2026-11-17 17:33:28.370076 addonmanager.cpp:195] Loaded addon cloudpinyin|fcitx5-remote now: |XIM_SERVERS(ATOM) = @server=fcitx| engines:  | err: ",
+  "version": "5.1.7"
+ },
+ {
+  "cell": "ime:linux-x11:ibus-anthy",
+  "ran": false,
+  "result": "fail",
+  "detail": "ibus-daemon missing: Package ibus-anthy is not available, but is referred to by another package.|This may mean that the package is missing, has been obsoleted, or|is only available from another source||E: Package 'ibus-anthy' has no installation candidate|EXTRA INSTALL FAILED|"
+ },
+ {
+  "cell": "ime:linux-x11:ibus-libpinyin",
+  "ran": true,
+  "result": "fail",
+  "detail": "IBus 1.5.29-rc2; engine libpinyin; wanted 你好; XIM_SERVERS: ; goome 'ime rc 0 no error'; preedit:  committed: ''; ime.log tail: key h|buf nih|key a|buf niha|key o|buf nihao|key  |buf nihao | | im log: |(process:4262): IBUS-WARNING **: 17:36:10.998: ibus_bus_call_sync: org.freedesktop.IBus.SetGlobalEngine: GDBus.Error:org.freedesktop.DBus.Error.Failed: Set global engine failed: Timeout was reached|Set global engine failed.|active engine: |(process:4278): IBUS-WARNING **: 17:36:17.005: ibus_bus_call_sync: org.freedesktop.DBus.Properties.Get: GDBus.Error:org.freedesktop.DBus.Error.Failed: No global engine.|No engine is set.| engines: language: Ipulo   xkb:cm:qwerty:ass - Cameroon Multilingual (QWERTY, intl.)   xkb:cm:azerty:ass - Cameroon (AZERTY, intl.) language: Akan   xkb:gh:akan:aka - Akan language: Hawaiian   xkb:us:haw:haw - Hawaiian language: Nugunu (Cameroon)   xkb:cm:qwerty:yas - Cameroon Multilingual (QWERTY, intl.)    | err: ",
+  "version": "IBus 1.5.29-rc2"
+ },
+ {
+  "cell": "ime:linux-x11:ibus-mozc",
+  "ran": true,
+  "result": "pass",
+  "detail": "IBus 1.5.29-rc2; engine mozc-jp; goome 'ime rc 0 no error'; preedit events: preedit 'ｎ' 3;preedit 'に' 3;preedit 'に' 3;preedit 'に' 3; committed: text にほんご; buf: buf にほんご",
+  "version": "IBus 1.5.29-rc2"
+ },
+ {
+  "cell": "ime:macos:x86_64:kotoeri",
+  "ran": true,
+  "result": "fail",
+  "detail": "macOS 15.7.9 x86_64; swiftc: ; tis: matches for com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese: 1;enable 0;select -50;current com.apple.keylayout.ABC;; keys: ax trusted true;; osa: ; goome log: ime rc 0 no error;key n;buf n;key i;buf ni;key h;buf nih;key o;buf niho;key n;buf nihon;key g;buf nihong;key o;buf nihongo;key  ;buf nihongo ;",
+  "version": "15.7.9"
+ },
+ {
+  "cell": "ime:macos:x86_64:pinyin",
+  "ran": true,
+  "result": "fail",
+  "detail": "macOS 15.7.9 x86_64; swiftc: ; tis: matches for com.apple.inputmethod.SCIM.ITABC: 1;enable 0;select -50;current com.apple.keylayout.ABC;; keys: ax trusted true;; osa: ; goome log: ime rc 0 no error;key n;buf n;key i;buf ni;key h;buf nih;key a;buf niha;key o;buf nihao;key  ;buf nihao ;",
+  "version": "15.7.9"
+ },
+ {
+  "cell": "ime:windows-ms-pinyin",
+  "ran": true,
+  "result": "fail",
+  "detail": "Microsoft Windows Server 2025 Datacenter 10.0.26100; steps: zh-CN basic capability state: Language.Basic~~~zh-CN~0.0.1.0=NotPresent | Add-WindowsCapability zh-CN ok | Install-Language ok | Set-WinUserLanguageList zh-CN ok | languages after: zh-Hans-CN:0804:{81D4E9C9-1D3B-41BC-9E6C-4B40BF79E35E}{FA550B04-5AD7-411F-A5AC-CA038EC515D7} | tip helper build: ok | tip activate: create 0 activate 0; goome log: preedit [] text [] all: ",
+  "version": "Microsoft Windows Server 2025 Datacenter 10.0.26100"
+ },
+ {
+  "cell": "screenreader:linux-orca",
+  "ran": true,
+  "result": "fail",
+  "detail": "orca 46.1 did not speak the button label. SPEECH OUTPUT lines 2: 17:34:08.369278 - SPEECH OUTPUT: 'Screen reader on.' {'established': False, 'family': {'name': None, 'gender': None, 'lang': None, 'dialect': None, 'variant': None}};17:34:17.341401 - SPEECH OUTPUT: 'Name entry Bo.' {'established': False, 'family': {'name': None, 'gender': None, 'lang': None, 'dialect': None, 'variant': None}}; | drive: focus Name True|focus Press me True|focus Dark mode True| | orca.out:  | debug tail:                   BRAILLE GENERATOR: Results: |                  'Component: 'goome a11y frame', 0' |                  'Region: ' ', 0' |                  'Component: 'goome a11y internal frame', 0' |                  'Region: ' ', 0' |                  'Component: '< > Dark mode check box', 0'",
+  "version": "46.1"
+ },
+ {
+  "cell": "screenreader:macos-voiceover:GitHub Actions 1000005270",
+  "ran": true,
+  "result": "fail",
+  "detail": "macOS 15.7.9: VoiceOver speech could not be read. last phrase: 40:51: execution error: VoiceOver got an error: AppleEvent timed out. (-1712)  |  | VoiceOver.app present | sip: System Integrity Protection status: disabled. | tcc db readable: kTCCServiceDeveloperTool|com.apple.Terminal|0,kTCCServiceAccessibility|/bin/bash|2,kTCCServiceAccessibility|/opt/hca/hosted-compute-agent|2,kTCCServiceAccessibility|/opt/hca/start_hca.sh|2,kTCCServiceAccessibility|/usr/bin/osascript|2, | tcc insert result:  | ui scripting: 40:59: execution error: System Events got an error: Can’t set UI elements enabled of application to true. (-10006) | cmd+f5: 40:59: execution error: System Events got an error: Can’t set UI elements enabled of application to true. (-10006) | voiceover process: 1416 VoiceOver Quick  | last phrase query: 40:51: execution error: VoiceOver got an error: AppleEvent timed out. (-1712) ",
+  "version": "15.7.9"
+ },
+ {
+  "cell": "screenreader:windows-narrator",
+  "ran": true,
+  "result": "fail",
+  "detail": "Narrator process count 1 after launch; Narrator has no speech log or capture hook and the runner has no audio device, so what it said could not be read. event logs: '' ; drive: focused Name; focused Press me; focused Dark mode; focused Volume; focused Press me"
+ },
+ {
+  "cell": "screenreader:windows-nvda",
+  "ran": true,
+  "result": "fail",
+  "detail": "NVDA 2026.3 alive=True; no speech line with Press me. Speaking lines: 5 (Speaking [LangChangeCommand ('en_US'), 'C:\\\\ProgramData\\\\GitHub\\\\HostedComputeAgent\\\\hosted-compute-agent', 'window', CancellableSpeech (still valid)] ; Speaking [LangChangeCommand ('en_US'), 'Default', 'terminal', 'C:\\\\ProgramData\\\\GitHub\\\\HostedComputeAgent\\\\hosted-compute-agent', CancellableSpeech (still valid)] ; Speaking [LangChangeCommand ('en_US'), 'goome a11y', CancellableSpeech (still valid)] ; Speaking [LangChangeCommand ('en_US'), 'C:\\\\ProgramData\\\\GitHub\\\\HostedComputeAgent\\\\hosted-compute-agent', 'window', CancellableSpeech (still valid)]); drive: focused Name; focused Press me; focused Dark mode; focused Volume; focused Press me; log tail: DEBUG - appModuleHandler.cleanup (17:34:33.021) - MainThread (8132): | application a11y_app closed | IO - speech.speech.speak (17:34:33.043) - MainThread (8132): | Speaking [LangChangeCommand ('en_US'), 'C:\\\\ProgramData\\\\GitHub\\\\HostedComputeAgent\\\\hosted-compute-agent', 'window', CancellableSpeech (still valid)] | IO - speech.speech.speak (17:34:33.048) - MainThread (8132): | Speaking [LangChangeCommand ('en_US'), 'Default', 'terminal', 'C:\\\\ProgramData\\\\GitHub\\\\HostedComputeAgent\\\\hosted-compute-agent', CancellableSpeech (still valid)]",
+  "version": "2026.3"
+ },
+ {
+  "cell": "unit:Linux-x86_64",
+  "ran": true,
+  "result": "pass",
+  "detail": "tests/unit.c ran 39589 CHECK evaluations, all good, runner image ubuntu24 20261111.370.1",
+  "version": "ubuntu24 20261111.370.1"
+ },
+ {
+  "cell": "unit:Windows-x86_64",
+  "ran": true,
+  "result": "pass",
+  "detail": "tests/unit.c ran 39588 CHECK evaluations, all good, runner image win25-vs2026 20261103.298.1",
+  "version": "win25-vs2026 20261103.298.1"
+ },
+ {
+  "cell": "unit:macOS-arm64",
+  "ran": true,
+  "result": "pass",
+  "detail": "tests/unit.c ran 39588 CHECK evaluations, all good, runner image macos26 20261102.0473.1",
+  "version": "macos26 20261102.0473.1"
+ },
+ {
+  "cell": "unit:macOS-x86_64",
+  "ran": true,
+  "result": "pass",
+  "detail": "tests/unit.c ran 39588 CHECK evaluations, all good, runner image macos15 20260824.0482.1",
+  "version": "macos15 20260824.0482.1"
+ },
+ {
+  "cell": "wayland:cage:arch:hit",
+  "ran": true,
+  "result": "fail",
+  "detail": "no down event at 220,150 in goome log (0 downs; motions 2); input via wlr; inject:  watch: monitors 1|mon 0 id 311 HEADLESS-1 1280x720+0+0 scale 1.00 px 1280x720 rot 0|motion 220,150 mon 0|motion 220,150 mon 0|held 1 at 0,0|held 0 at 0,0|",
+  "version": "cage: invalid option -- '-'"
+ },
+ {
+  "cell": "wayland:cage:arch:open",
+  "ran": true,
+  "result": "pass",
+  "detail": "goome backend 'x11'; mon 0 id 311 HEADLESS-1 1280x720+0+0 scale 1.00 px 1280x720 rot 0; compositor cage: invalid option -- '-'",
+  "version": "cage: invalid option -- '-'"
+ },
+ {
+  "cell": "wayland:cage:arch:through",
+  "ran": true,
+  "result": "pass",
+  "detail": "click outside the rect reached the window underneath (under down 272 600,500;) and not goome; click inside the rect also reached the window below: no; input via wlr",
+  "version": "cage: invalid option -- '-'"
+ },
+ {
+  "cell": "wayland:cage:ubuntu-24.04:hit",
+  "ran": false,
+  "result": "fail",
+  "detail": "not run: goome did not open: open failed: no display to draw on| | comp: > Warning:          Could not resolve keysym XF86TraditionalSonar|> Warning:          Could not resolve keysym XF86ClearvuSonar|> Warning:          Could not resolve keysym XF86SidevuSonar|> Warning:          Could not resolve keysym XF86NavInfo|Errors from xkbcomp are not fatal to the X server|(EE) failed to read Wayland events: Broken pipe|",
+  "version": "cage: invalid option -- '-'"
+ },
+ {
+  "cell": "wayland:cage:ubuntu-24.04:open",
+  "ran": false,
+  "result": "fail",
+  "detail": "goome did not open: open failed: no display to draw on| | comp: > Warning:          Could not resolve keysym XF86TraditionalSonar|> Warning:          Could not resolve keysym XF86ClearvuSonar|> Warning:          Could not resolve keysym XF86SidevuSonar|> Warning:          Could not resolve keysym XF86NavInfo|Errors from xkbcomp are not fatal to the X server|(EE) failed to read Wayland events: Broken pipe|",
+  "version": "cage: invalid option -- '-'"
+ },
+ {
+  "cell": "wayland:cage:ubuntu-24.04:through",
+  "ran": false,
+  "result": "fail",
+  "detail": "not run: goome did not open: open failed: no display to draw on| | comp: > Warning:          Could not resolve keysym XF86TraditionalSonar|> Warning:          Could not resolve keysym XF86ClearvuSonar|> Warning:          Could not resolve keysym XF86SidevuSonar|> Warning:          Could not resolve keysym XF86NavInfo|Errors from xkbcomp are not fatal to the X server|(EE) failed to read Wayland events: Broken pipe|",
+  "version": "cage: invalid option -- '-'"
+ },
+ {
+  "cell": "wayland:hyprland:arch:hit",
+  "ran": false,
+  "result": "fail",
+  "detail": "not run: compositor never gave a wayland socket: DEBUG ]: [Config::initConfigManager] [cfg] Config is either explicit or special|DEBUG ]: [CCompositor::initManagers] Creating the Error Overlay!|DEBUG ]: [CCompositor::initManagers] Creating the LayoutManager!|DEBUG ]: [CCompositor::initManagers] Creating the TokenManager!|ERR ]: [IPC::Socket2::CUnixImpl::CUnixImpl] [Socket2::UnixImpl] path is too long. (2) IPC will not work.|DEBUG ]: [Config::Lua::CConfigManager::postConfigReload] Disabling stdout logs (debug.enable_stdout_logs = 0). Further logs will be written to /__w/c-goome/c-goome/verify-out/wl-hyprland-arch/rt/hypr/11cbc6c577b84ffb1edf4df3fc5b6128c3ae6947_1794936893_1598649292/hyprland.log|DEBUG ]: [CCompositor::initManagers] Creating the PointerManager!|DEBUG ]: [CCompositor::initManagers] Creating the AsyncResourceGatherer!|terminate called after throwing an instance of 'std::runtime_error'|  what():  CBackend::create() failed!|Hyprland has crashed :( Consult the crash report at /__w/c-goome/c-goome/verify-out/wl-hyprland-arch/home/.cache/hyprland/hyprlandCrashReport1275.txt for more information.|lspci: Unable to load libkmod resources: error -2| ",
+  "version": "Hyprland 0.57.2 built from branch v0.57.2 at commit 11cbc6c577b84ffb1edf4df3fc5b6128c3ae6947 clean (VERSION: bump to 0.57.2)."
+ },
+ {
+  "cell": "wayland:hyprland:arch:open",
+  "ran": false,
+  "result": "fail",
+  "detail": "compositor never gave a wayland socket: DEBUG ]: [Config::initConfigManager] [cfg] Config is either explicit or special|DEBUG ]: [CCompositor::initManagers] Creating the Error Overlay!|DEBUG ]: [CCompositor::initManagers] Creating the LayoutManager!|DEBUG ]: [CCompositor::initManagers] Creating the TokenManager!|ERR ]: [IPC::Socket2::CUnixImpl::CUnixImpl] [Socket2::UnixImpl] path is too long. (2) IPC will not work.|DEBUG ]: [Config::Lua::CConfigManager::postConfigReload] Disabling stdout logs (debug.enable_stdout_logs = 0). Further logs will be written to /__w/c-goome/c-goome/verify-out/wl-hyprland-arch/rt/hypr/11cbc6c577b84ffb1edf4df3fc5b6128c3ae6947_1794936893_1598649292/hyprland.log|DEBUG ]: [CCompositor::initManagers] Creating the PointerManager!|DEBUG ]: [CCompositor::initManagers] Creating the AsyncResourceGatherer!|terminate called after throwing an instance of 'std::runtime_error'|  what():  CBackend::create() failed!|Hyprland has crashed :( Consult the crash report at /__w/c-goome/c-goome/verify-out/wl-hyprland-arch/home/.cache/hyprland/hyprlandCrashReport1275.txt for more information.|lspci: Unable to load libkmod resources: error -2| ",
+  "version": "Hyprland 0.57.2 built from branch v0.57.2 at commit 11cbc6c577b84ffb1edf4df3fc5b6128c3ae6947 clean (VERSION: bump to 0.57.2)."
+ },
+ {
+  "cell": "wayland:hyprland:arch:through",
+  "ran": false,
+  "result": "fail",
+  "detail": "not run: compositor never gave a wayland socket: DEBUG ]: [Config::initConfigManager] [cfg] Config is either explicit or special|DEBUG ]: [CCompositor::initManagers] Creating the Error Overlay!|DEBUG ]: [CCompositor::initManagers] Creating the LayoutManager!|DEBUG ]: [CCompositor::initManagers] Creating the TokenManager!|ERR ]: [IPC::Socket2::CUnixImpl::CUnixImpl] [Socket2::UnixImpl] path is too long. (2) IPC will not work.|DEBUG ]: [Config::Lua::CConfigManager::postConfigReload] Disabling stdout logs (debug.enable_stdout_logs = 0). Further logs will be written to /__w/c-goome/c-goome/verify-out/wl-hyprland-arch/rt/hypr/11cbc6c577b84ffb1edf4df3fc5b6128c3ae6947_1794936893_1598649292/hyprland.log|DEBUG ]: [CCompositor::initManagers] Creating the PointerManager!|DEBUG ]: [CCompositor::initManagers] Creating the AsyncResourceGatherer!|terminate called after throwing an instance of 'std::runtime_error'|  what():  CBackend::create() failed!|Hyprland has crashed :( Consult the crash report at /__w/c-goome/c-goome/verify-out/wl-hyprland-arch/home/.cache/hyprland/hyprlandCrashReport1275.txt for more information.|lspci: Unable to load libkmod resources: error -2| ",
+  "version": "Hyprland 0.57.2 built from branch v0.57.2 at commit 11cbc6c577b84ffb1edf4df3fc5b6128c3ae6947 clean (VERSION: bump to 0.57.2)."
+ },
+ {
+  "cell": "wayland:hyprland:ubuntu-24.04:hit",
+  "ran": false,
+  "result": "fail",
+  "detail": "not run: Hyprland is not installed on ubuntu-24.04: "
+ },
+ {
+  "cell": "wayland:hyprland:ubuntu-24.04:open",
+  "ran": false,
+  "result": "fail",
+  "detail": "Hyprland is not installed on ubuntu-24.04: "
+ },
+ {
+  "cell": "wayland:hyprland:ubuntu-24.04:through",
+  "ran": false,
+  "result": "fail",
+  "detail": "not run: Hyprland is not installed on ubuntu-24.04: "
+ },
+ {
+  "cell": "wayland:kwin:arch:hit",
+  "ran": false,
+  "result": "fail",
+  "detail": "not run: goome did not open:  | comp: ",
+  "version": "kwin 6.8.3"
+ },
+ {
+  "cell": "wayland:kwin:arch:open",
+  "ran": false,
+  "result": "fail",
+  "detail": "goome did not open:  | comp: ",
+  "version": "kwin 6.8.3"
+ },
+ {
+  "cell": "wayland:kwin:arch:through",
+  "ran": false,
+  "result": "fail",
+  "detail": "not run: goome did not open:  | comp: ",
+  "version": "kwin 6.8.3"
+ },
+ {
+  "cell": "wayland:kwin:ubuntu-24.04:hit",
+  "ran": true,
+  "result": "pass",
+  "detail": "click inside the hit rect reached goome: down 1 220,150 mon 0; input via kwin",
+  "version": "kwin 5.27.11"
+ },
+ {
+  "cell": "wayland:kwin:ubuntu-24.04:open",
+  "ran": true,
+  "result": "pass",
+  "detail": "goome backend 'wayland + portal'; mon 0 id 45 Virtual-0 1280x720+0+0 scale 1.00 px 1280x720 rot 0; compositor kwin 5.27.11",
+  "version": "kwin 5.27.11"
+ },
+ {
+  "cell": "wayland:kwin:ubuntu-24.04:through",
+  "ran": true,
+  "result": "pass",
+  "detail": "click outside the rect reached the window underneath (under down 272 600,500;under down 272 600,500;) and not goome; click inside the rect also reached the window below: no; input via kwin",
+  "version": "kwin 5.27.11"
+ },
+ {
+  "cell": "wayland:labwc:arch:hit",
+  "ran": true,
+  "result": "pass",
+  "detail": "click inside the hit rect reached goome: down 1 220,150 mon 0; input via wlr",
+  "version": "labwc 0.20.3 (+xwayland +nls +rsvg +libsfdo) wlroots-0.20.2"
+ },
+ {
+  "cell": "wayland:labwc:arch:open",
+  "ran": true,
+  "result": "pass",
+  "detail": "goome backend 'wayland + wlr'; mon 0 id 54 HEADLESS-1 1280x720+0+0 scale 1.00 px 1280x720 rot 0; compositor labwc 0.20.3 (+xwayland +nls +rsvg +libsfdo) wlroots-0.20.2",
+  "version": "labwc 0.20.3 (+xwayland +nls +rsvg +libsfdo) wlroots-0.20.2"
+ },
+ {
+  "cell": "wayland:labwc:arch:through",
+  "ran": true,
+  "result": "pass",
+  "detail": "click outside the rect reached the window underneath (under down 272 600,500;) and not goome; click inside the rect also reached the window below: no; input via wlr",
+  "version": "labwc 0.20.3 (+xwayland +nls +rsvg +libsfdo) wlroots-0.20.2"
+ },
+ {
+  "cell": "wayland:labwc:ubuntu-24.04:hit",
+  "ran": true,
+  "result": "pass",
+  "detail": "click inside the hit rect reached goome: down 1 220,150 mon 0; input via wlr",
+  "version": "labwc 0.7.1"
+ },
+ {
+  "cell": "wayland:labwc:ubuntu-24.04:open",
+  "ran": true,
+  "result": "pass",
+  "detail": "goome backend 'wayland + wlr'; mon 0 id 36 HEADLESS-1 1280x720+0+0 scale 1.00 px 1280x720 rot 0; compositor labwc 0.7.1",
+  "version": "labwc 0.7.1"
+ },
+ {
+  "cell": "wayland:labwc:ubuntu-24.04:through",
+  "ran": true,
+  "result": "pass",
+  "detail": "click outside the rect reached the window underneath (under down 272 600,500;) and not goome; click inside the rect also reached the window below: no; input via wlr",
+  "version": "labwc 0.7.1"
+ },
+ {
+  "cell": "wayland:mutter:arch:hit",
+  "ran": true,
+  "result": "pass",
+  "detail": "click inside the hit rect reached goome: down 1 220,150 mon 0; input via mutter",
+  "version": "mutter 51.1"
+ },
+ {
+  "cell": "wayland:mutter:arch:open",
+  "ran": true,
+  "result": "pass",
+  "detail": "goome backend 'x11 + mutter'; mon 0 id 382 Meta-0 1280x720+0+0 scale 1.00 px 1280x720 rot 0; compositor mutter 51.1",
+  "version": "mutter 51.1"
+ },
+ {
+  "cell": "wayland:mutter:arch:through",
+  "ran": true,
+  "result": "pass",
+  "detail": "click outside the rect reached the window underneath (under down 272 600,500;) and not goome; click inside the rect also reached the window below: no; input via mutter",
+  "version": "mutter 51.1"
+ },
+ {
+  "cell": "wayland:mutter:ubuntu-24.04:hit",
+  "ran": true,
+  "result": "pass",
+  "detail": "click inside the hit rect reached goome: down 1 220,150 mon 0; input via mutter",
+  "version": "mutter 46.2"
+ },
+ {
+  "cell": "wayland:mutter:ubuntu-24.04:open",
+  "ran": true,
+  "result": "pass",
+  "detail": "goome backend 'x11 + mutter'; mon 0 id 379 Meta-0 1280x720+0+0 scale 1.00 px 1280x720 rot 0; compositor mutter 46.2",
+  "version": "mutter 46.2"
+ },
+ {
+  "cell": "wayland:mutter:ubuntu-24.04:through",
+  "ran": true,
+  "result": "pass",
+  "detail": "click outside the rect reached the window underneath (under down 272 600,500;) and not goome; click inside the rect also reached the window below: no; input via mutter",
+  "version": "mutter 46.2"
+ },
+ {
+  "cell": "wayland:niri:arch:hit",
+  "ran": false,
+  "result": "fail",
+  "detail": "not run: compositor never gave a wayland socket: \u001b[2m2026-11-17T17:34:27.497476Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mniri\u001b[0m\u001b[2m:\u001b[0m starting version 26.04 (8ed0da4)|\u001b[2m2026-11-17T17:34:27.497652Z\u001b[0m \u001b[34mDEBUG\u001b[0m \u001b[2mniri_config\u001b[0m\u001b[2m:\u001b[0m loaded config from \"/__w/c-goome/c-goome/verify-out/wl-niri-arch/home/.config/niri/config.kdl\"||thread 'main' (1212) panicked at /build/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/xkbcommon-dl-0.4.2/src/x11.rs:59:28:|Library libxkbcommon-x11.so could not be loaded.|stack backtrace:|note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.| ",
+  "version": "niri 26.04 (8ed0da4)"
+ },
+ {
+  "cell": "wayland:niri:arch:open",
+  "ran": false,
+  "result": "fail",
+  "detail": "compositor never gave a wayland socket: \u001b[2m2026-11-17T17:34:27.497476Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mniri\u001b[0m\u001b[2m:\u001b[0m starting version 26.04 (8ed0da4)|\u001b[2m2026-11-17T17:34:27.497652Z\u001b[0m \u001b[34mDEBUG\u001b[0m \u001b[2mniri_config\u001b[0m\u001b[2m:\u001b[0m loaded config from \"/__w/c-goome/c-goome/verify-out/wl-niri-arch/home/.config/niri/config.kdl\"||thread 'main' (1212) panicked at /build/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/xkbcommon-dl-0.4.2/src/x11.rs:59:28:|Library libxkbcommon-x11.so could not be loaded.|stack backtrace:|note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.| ",
+  "version": "niri 26.04 (8ed0da4)"
+ },
+ {
+  "cell": "wayland:niri:arch:through",
+  "ran": false,
+  "result": "fail",
+  "detail": "not run: compositor never gave a wayland socket: \u001b[2m2026-11-17T17:34:27.497476Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mniri\u001b[0m\u001b[2m:\u001b[0m starting version 26.04 (8ed0da4)|\u001b[2m2026-11-17T17:34:27.497652Z\u001b[0m \u001b[34mDEBUG\u001b[0m \u001b[2mniri_config\u001b[0m\u001b[2m:\u001b[0m loaded config from \"/__w/c-goome/c-goome/verify-out/wl-niri-arch/home/.config/niri/config.kdl\"||thread 'main' (1212) panicked at /build/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/xkbcommon-dl-0.4.2/src/x11.rs:59:28:|Library libxkbcommon-x11.so could not be loaded.|stack backtrace:|note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.| ",
+  "version": "niri 26.04 (8ed0da4)"
+ },
+ {
+  "cell": "wayland:niri:ubuntu-24.04:hit",
+  "ran": false,
+  "result": "fail",
+  "detail": "not run: niri is not installed on ubuntu-24.04: "
+ },
+ {
+  "cell": "wayland:niri:ubuntu-24.04:open",
+  "ran": false,
+  "result": "fail",
+  "detail": "niri is not installed on ubuntu-24.04: "
+ },
+ {
+  "cell": "wayland:niri:ubuntu-24.04:through",
+  "ran": false,
+  "result": "fail",
+  "detail": "not run: niri is not installed on ubuntu-24.04: "
+ },
+ {
+  "cell": "wayland:river:arch:hit",
+  "ran": false,
+  "result": "fail",
+  "detail": "not run: compositor never gave a wayland socket: error: The init file /__w/c-goome/c-goome/verify-out/wl-river-arch/home/.config/river/init contains the string \"riverctl\".|This river version (0.5.2) does not support riverctl, you may|wish to install river-classic instead.||River 0.5.2 is a non-monolithic Wayland compositor and|requires a compatible window manager to be useful.|See https://isaacfreund.com/software/river for more information.|| ",
+  "version": "error: unknown option '--version'"
+ },
+ {
+  "cell": "wayland:river:arch:open",
+  "ran": false,
+  "result": "fail",
+  "detail": "compositor never gave a wayland socket: error: The init file /__w/c-goome/c-goome/verify-out/wl-river-arch/home/.config/river/init contains the string \"riverctl\".|This river version (0.5.2) does not support riverctl, you may|wish to install river-classic instead.||River 0.5.2 is a non-monolithic Wayland compositor and|requires a compatible window manager to be useful.|See https://isaacfreund.com/software/river for more information.|| ",
+  "version": "error: unknown option '--version'"
+ },
+ {
+  "cell": "wayland:river:arch:through",
+  "ran": false,
+  "result": "fail",
+  "detail": "not run: compositor never gave a wayland socket: error: The init file /__w/c-goome/c-goome/verify-out/wl-river-arch/home/.config/river/init contains the string \"riverctl\".|This river version (0.5.2) does not support riverctl, you may|wish to install river-classic instead.||River 0.5.2 is a non-monolithic Wayland compositor and|requires a compatible window manager to be useful.|See https://isaacfreund.com/software/river for more information.|| ",
+  "version": "error: unknown option '--version'"
+ },
+ {
+  "cell": "wayland:river:ubuntu-24.04:hit",
+  "ran": false,
+  "result": "fail",
+  "detail": "not run: river is not installed on ubuntu-24.04: "
+ },
+ {
+  "cell": "wayland:river:ubuntu-24.04:open",
+  "ran": false,
+  "result": "fail",
+  "detail": "river is not installed on ubuntu-24.04: "
+ },
+ {
+  "cell": "wayland:river:ubuntu-24.04:through",
+  "ran": false,
+  "result": "fail",
+  "detail": "not run: river is not installed on ubuntu-24.04: "
+ },
+ {
+  "cell": "wayland:sway:arch:hit",
+  "ran": true,
+  "result": "pass",
+  "detail": "click inside the hit rect reached goome: down 1 220,150 mon 0; input via wlr",
+  "version": "sway version 1.12"
+ },
+ {
+  "cell": "wayland:sway:arch:open",
+  "ran": true,
+  "result": "pass",
+  "detail": "goome backend 'wayland + wlr'; mon 0 id 56 HEADLESS-1 1280x720+0+0 scale 1.00 px 1280x720 rot 0; compositor sway version 1.12",
+  "version": "sway version 1.12"
+ },
+ {
+  "cell": "wayland:sway:arch:through",
+  "ran": true,
+  "result": "pass",
+  "detail": "click outside the rect reached the window underneath (under down 272 600,500;) and not goome; click inside the rect also reached the window below: no; input via wlr",
+  "version": "sway version 1.12"
+ },
+ {
+  "cell": "wayland:sway:ubuntu-24.04:hit",
+  "ran": true,
+  "result": "pass",
+  "detail": "click inside the hit rect reached goome: down 1 220,150 mon 0; input via wlr",
+  "version": "sway version 1.9"
+ },
+ {
+  "cell": "wayland:sway:ubuntu-24.04:open",
+  "ran": true,
+  "result": "pass",
+  "detail": "goome backend 'wayland + wlr'; mon 0 id 45 HEADLESS-1 1280x720+0+0 scale 1.00 px 1280x720 rot 0; compositor sway version 1.9",
+  "version": "sway version 1.9"
+ },
+ {
+  "cell": "wayland:sway:ubuntu-24.04:through",
+  "ran": true,
+  "result": "pass",
+  "detail": "click outside the rect reached the window underneath (under down 272 600,500;) and not goome; click inside the rect also reached the window below: no; input via wlr",
+  "version": "sway version 1.9"
+ },
+ {
+  "cell": "wayland:wayfire:arch:hit",
+  "ran": true,
+  "result": "pass",
+  "detail": "click inside the hit rect reached goome: down 1 220,150 mon 0; input via wlr",
+  "version": "0.11.0-d3990237 (Jul 27 2026) branch makepkg wlroots-0.20.2"
+ },
+ {
+  "cell": "wayland:wayfire:arch:open",
+  "ran": true,
+  "result": "pass",
+  "detail": "goome backend 'wayland + wlr'; mon 0 id 40 HEADLESS-1 1280x720+0+0 scale 1.00 px 1280x720 rot 0; compositor 0.11.0-d3990237 (Jul 27 2026) branch makepkg wlroots-0.20.2",
+  "version": "0.11.0-d3990237 (Jul 27 2026) branch makepkg wlroots-0.20.2"
+ },
+ {
+  "cell": "wayland:wayfire:arch:through",
+  "ran": true,
+  "result": "pass",
+  "detail": "click outside the rect reached the window underneath (under down 272 600,500;) and not goome; click inside the rect also reached the window below: no; input via wlr",
+  "version": "0.11.0-d3990237 (Jul 27 2026) branch makepkg wlroots-0.20.2"
+ },
+ {
+  "cell": "wayland:wayfire:ubuntu-24.04:hit",
+  "ran": false,
+  "result": "fail",
+  "detail": "not run: compositor never gave a wayland socket: II 17-11-26 17:35:55.959 - [src/main.cpp:337] Starting wayfire version 0.9.0|II 17-11-26 17:35:55.959 - [backend/backend.c:309] Loading user-specified backends due to WLR_BACKENDS: headless|II 17-11-26 17:35:55.959 - [backend/headless/backend.c:67] Creating headless backend|EE 17-11-26 17:35:55.959 - [src/main.cpp:362] Failed to get DRM file descriptor, try specifying a valid WLR_RENDER_DRM_DEVICE!| ",
+  "version": "0.9.0"
+ },
+ {
+  "cell": "wayland:wayfire:ubuntu-24.04:open",
+  "ran": false,
+  "result": "fail",
+  "detail": "compositor never gave a wayland socket: II 17-11-26 17:35:55.959 - [src/main.cpp:337] Starting wayfire version 0.9.0|II 17-11-26 17:35:55.959 - [backend/backend.c:309] Loading user-specified backends due to WLR_BACKENDS: headless|II 17-11-26 17:35:55.959 - [backend/headless/backend.c:67] Creating headless backend|EE 17-11-26 17:35:55.959 - [src/main.cpp:362] Failed to get DRM file descriptor, try specifying a valid WLR_RENDER_DRM_DEVICE!| ",
+  "version": "0.9.0"
+ },
+ {
+  "cell": "wayland:wayfire:ubuntu-24.04:through",
+  "ran": false,
+  "result": "fail",
+  "detail": "not run: compositor never gave a wayland socket: II 17-11-26 17:35:55.959 - [src/main.cpp:337] Starting wayfire version 0.9.0|II 17-11-26 17:35:55.959 - [backend/backend.c:309] Loading user-specified backends due to WLR_BACKENDS: headless|II 17-11-26 17:35:55.959 - [backend/headless/backend.c:67] Creating headless backend|EE 17-11-26 17:35:55.959 - [src/main.cpp:362] Failed to get DRM file descriptor, try specifying a valid WLR_RENDER_DRM_DEVICE!| ",
+  "version": "0.9.0"
+ },
+ {
+  "cell": "wayland:weston-desktop:arch:hit",
+  "ran": true,
+  "result": "fail",
+  "detail": "no down event at 220,150 in goome log (0 downs; motions 2); input via x11; inject:  watch: backend: x11 caps 116 global pointer|monitors 1|mon 0 id 304 screen0 1280x720+0+0 scale 1.00 px 1280x720 rot 0|motion 220,150 mon 0|motion 220,150 mon 0|",
+  "version": "weston 15.0.1"
+ },
+ {
+  "cell": "wayland:weston-desktop:arch:open",
+  "ran": true,
+  "result": "pass",
+  "detail": "goome backend 'x11'; mon 0 id 304 screen0 1280x720+0+0 scale 1.00 px 1280x720 rot 0; compositor weston 15.0.1",
+  "version": "weston 15.0.1"
+ },
+ {
+  "cell": "wayland:weston-desktop:arch:through",
+  "ran": true,
+  "result": "pass",
+  "detail": "click outside the rect reached the window underneath (under down 272 600,500;) and not goome; click inside the rect also reached the window below: no; input via x11",
+  "version": "weston 15.0.1"
+ },
+ {
+  "cell": "wayland:weston-desktop:ubuntu-24.04:hit",
+  "ran": true,
+  "result": "pass",
+  "detail": "click inside the hit rect reached goome: down 1 220,150 mon 0; input via x11",
+  "version": "weston 13.0.0"
+ },
+ {
+  "cell": "wayland:weston-desktop:ubuntu-24.04:open",
+  "ran": true,
+  "result": "pass",
+  "detail": "goome backend 'x11'; mon 0 id 299 screen0 1280x720+0+0 scale 1.00 px 1280x720 rot 0; compositor weston 13.0.0",
+  "version": "weston 13.0.0"
+ },
+ {
+  "cell": "wayland:weston-desktop:ubuntu-24.04:through",
+  "ran": true,
+  "result": "fail",
+  "detail": "under client log: under ready 1280x720|under enter 960,540| | goome downs: down 1 220,150 mon 0; | input via x11 inject: ",
+  "version": "weston 13.0.0"
+ },
+ {
+  "cell": "wayland:weston-headless:arch:hit",
+  "ran": false,
+  "result": "fail",
+  "detail": "weston headless backend has no input device and no virtual pointer protocol, so no click can be injected (under client ready 1280x720)",
+  "version": "weston 15.0.1"
+ },
+ {
+  "cell": "wayland:weston-headless:arch:open",
+  "ran": true,
+  "result": "pass",
+  "detail": "goome backend 'x11'; mon 0 id 293 headless 1280x720+0+0 scale 1.00 px 1280x720 rot 0; compositor weston 15.0.1",
+  "version": "weston 15.0.1"
+ },
+ {
+  "cell": "wayland:weston-headless:arch:through",
+  "ran": false,
+  "result": "fail",
+  "detail": "same: no way to inject a click into the headless backend",
+  "version": "weston 15.0.1"
+ },
+ {
+  "cell": "wayland:weston-headless:ubuntu-24.04:hit",
+  "ran": false,
+  "result": "fail",
+  "detail": "weston headless backend has no input device and no virtual pointer protocol, so no click can be injected (under client ready 1280x720)",
+  "version": "weston 13.0.0"
+ },
+ {
+  "cell": "wayland:weston-headless:ubuntu-24.04:open",
+  "ran": true,
+  "result": "pass",
+  "detail": "goome backend 'x11'; mon 0 id 289 headless 1280x720+0+0 scale 1.00 px 1280x720 rot 0; compositor weston 13.0.0",
+  "version": "weston 13.0.0"
+ },
+ {
+  "cell": "wayland:weston-headless:ubuntu-24.04:through",
+  "ran": false,
+  "result": "fail",
+  "detail": "same: no way to inject a click into the headless backend",
+  "version": "weston 13.0.0"
+ },
+ {
+  "cell": "wayland:weston-kiosk:arch:hit",
+  "ran": true,
+  "result": "fail",
+  "detail": "no down event at 220,150 in goome log (0 downs; motions 2); input via x11; inject:  watch: backend: x11 caps 116 global pointer|monitors 1|mon 0 id 304 screen0 1280x720+0+0 scale 1.00 px 1280x720 rot 0|motion 220,150 mon 0|motion 220,150 mon 0|",
+  "version": "weston 15.0.1"
+ },
+ {
+  "cell": "wayland:weston-kiosk:arch:open",
+  "ran": true,
+  "result": "pass",
+  "detail": "goome backend 'x11'; mon 0 id 304 screen0 1280x720+0+0 scale 1.00 px 1280x720 rot 0; compositor weston 15.0.1",
+  "version": "weston 15.0.1"
+ },
+ {
+  "cell": "wayland:weston-kiosk:arch:through",
+  "ran": true,
+  "result": "pass",
+  "detail": "click outside the rect reached the window underneath (under down 272 600,500;) and not goome; click inside the rect also reached the window below: no; input via x11",
+  "version": "weston 15.0.1"
+ },
+ {
+  "cell": "wayland:weston-kiosk:ubuntu-24.04:hit",
+  "ran": true,
+  "result": "pass",
+  "detail": "click inside the hit rect reached goome: down 1 220,150 mon 0; input via x11",
+  "version": "weston 13.0.0"
+ },
+ {
+  "cell": "wayland:weston-kiosk:ubuntu-24.04:open",
+  "ran": true,
+  "result": "pass",
+  "detail": "goome backend 'x11'; mon 0 id 299 screen0 1280x720+0+0 scale 1.00 px 1280x720 rot 0; compositor weston 13.0.0",
+  "version": "weston 13.0.0"
+ },
+ {
+  "cell": "wayland:weston-kiosk:ubuntu-24.04:through",
+  "ran": true,
+  "result": "fail",
+  "detail": "under client log: under ready 1280x720|under enter 960,540| | goome downs: down 1 220,150 mon 0; | input via x11 inject: ",
+  "version": "weston 13.0.0"
+ },
+ {
+  "cell": "x11:fluxbox",
+  "ran": true,
+  "result": "pass",
+  "detail": "backend 'x11 + x11'; overlay shown (root pixel at 300,150 #000000 -> #1C1C23): yes; click in hit rect reaches goome: yes; click outside reaches window below (xev ButtonPress): yes; goome stole outside click: no; goome stderr: goome: no compositor running, the overlay has no see-through edges. on xfce turn it on in Settings > Window Manager Tweaks > Compositor; wm: Warning: Failed to open file(fluxbox.cat)",
+  "version": "Warning: Failed to open file(fluxbox.cat)"
+ },
+ {
+  "cell": "x11:i3",
+  "ran": true,
+  "result": "pass",
+  "detail": "backend 'x11 + x11'; overlay shown (root pixel at 300,150 #FFFFFF -> #1C1C23): yes; click in hit rect reaches goome: yes; click outside reaches window below (xev ButtonPress): yes; goome stole outside click: no; goome stderr: goome: no compositor running, the overlay has no see-through edges. on xfce turn it on in Settings > Window Manager Tweaks > Compositor; wm: i3 version 4.23 (2023-10-29) © 2009 Michael Stapelberg and contributors",
+  "version": "i3 version 4.23 (2023-10-29) © 2009 Michael Stapelberg and contributors"
+ },
+ {
+  "cell": "x11:icewm",
+  "ran": true,
+  "result": "pass",
+  "detail": "backend 'x11 + x11'; overlay shown (root pixel at 300,150 #000000 -> #1C1C23): yes; click in hit rect reaches goome: yes; click outside reaches window below (xev ButtonPress): yes; goome stole outside click: no; goome stderr: goome: no compositor running, the overlay has no see-through edges. on xfce turn it on in Settings > Window Manager Tweaks > Compositor; wm: IceWM 3.4.5, Copyright 1997-2012 Marko Macek, 2001 Mathias Hasselmann.",
+  "version": "IceWM 3.4.5, Copyright 1997-2012 Marko Macek, 2001 Mathias Hasselmann."
+ },
+ {
+  "cell": "x11:kwin-x11",
+  "ran": true,
+  "result": "pass",
+  "detail": "backend 'x11 + x11'; overlay shown (root pixel at 300,150 #000000 -> #1C1C23): yes; click in hit rect reaches goome: yes; click outside reaches window below (xev ButtonPress): yes; goome stole outside click: no; goome stderr: ; wm: kwin 5.27.11",
+  "version": "kwin 5.27.11"
+ },
+ {
+  "cell": "x11:marco",
+  "ran": true,
+  "result": "pass",
+  "detail": "backend 'x11 + x11'; overlay shown (root pixel at 300,150 #000000 -> #1C1C23): yes; click in hit rect reaches goome: yes; click outside reaches window below (xev ButtonPress): yes; goome stole outside click: no; goome stderr: goome: no compositor running, the overlay has no see-through edges. on xfce turn it on in Settings > Window Manager Tweaks > Compositor; wm: marco 1.26.2",
+  "version": "marco 1.26.2"
+ },
+ {
+  "cell": "x11:metacity",
+  "ran": true,
+  "result": "pass",
+  "detail": "backend 'x11 + x11'; overlay shown (root pixel at 300,150 #000000 -> #1C1C23): yes; click in hit rect reaches goome: yes; click outside reaches window below (xev ButtonPress): yes; goome stole outside click: no; goome stderr: goome: no compositor running, the overlay has no see-through edges. on xfce turn it on in Settings > Window Manager Tweaks > Compositor; wm: metacity 3.52.0",
+  "version": "metacity 3.52.0"
+ },
+ {
+  "cell": "x11:mutter-x11",
+  "ran": true,
+  "result": "pass",
+  "detail": "backend 'x11 + x11'; overlay shown (root pixel at 300,150 #141438 -> #1E1E2A): yes; click in hit rect reaches goome: yes; click outside reaches window below (xev ButtonPress): yes; goome stole outside click: no; goome stderr: ; wm: mutter 46.2",
+  "version": "mutter 46.2"
+ },
+ {
+  "cell": "x11:none",
+  "ran": true,
+  "result": "pass",
+  "detail": "backend 'x11 + x11'; overlay shown (root pixel at 300,150 #000000 -> #1C1C23): yes; click in hit rect reaches goome: yes; click outside reaches window below (xev ButtonPress): yes; goome stole outside click: no; goome stderr: goome: no compositor running, the overlay has no see-through edges. on xfce turn it on in Settings > Window Manager Tweaks > Compositor; wm: none",
+  "version": "none"
+ },
+ {
+  "cell": "x11:openbox",
+  "ran": true,
+  "result": "pass",
+  "detail": "backend 'x11 + x11'; overlay shown (root pixel at 300,150 #000000 -> #1C1C23): yes; click in hit rect reaches goome: yes; click outside reaches window below (xev ButtonPress): yes; goome stole outside click: no; goome stderr: goome: no compositor running, the overlay has no see-through edges. on xfce turn it on in Settings > Window Manager Tweaks > Compositor; wm: Openbox 3.6.1",
+  "version": "Openbox 3.6.1"
+ },
+ {
+  "cell": "x11:xfwm4",
+  "ran": true,
+  "result": "pass",
+  "detail": "backend 'x11 + x11'; overlay shown (root pixel at 300,150 #000000 -> #1C1C23): yes; click in hit rect reaches goome: yes; click outside reaches window below (xev ButtonPress): yes; goome stole outside click: no; goome stderr: goome: no compositor running, the overlay has no see-through edges. on xfce turn it on in Settings > Window Manager Tweaks > Compositor; wm: "
+ },
+ {
+  "cell": "x11:xfwm4-picom",
+  "ran": true,
+  "result": "pass",
+  "detail": "backend 'x11 + x11'; overlay shown (root pixel at 300,150 #000000 -> #1C1C23): yes; click in hit rect reaches goome: yes; click outside reaches window below (xev ButtonPress): yes; goome stole outside click: no; goome stderr: ; wm:  + v10",
+  "version": " + v10"
+ }
+]
