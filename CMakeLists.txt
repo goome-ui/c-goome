@@ -18,7 +18,7 @@ endif()
 if(MSVC)
   target_compile_options(goome PRIVATE /W3 /wd4996)
 else()
-  target_compile_options(goome PRIVATE -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers)
+  target_compile_options(goome PRIVATE -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -ffp-contract=off)
 endif()
 if(UNIX AND NOT APPLE)
   target_link_libraries(goome PUBLIC ${CMAKE_DL_LIBS}) # only matters on glibc older than 2.34
