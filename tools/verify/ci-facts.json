@@ -1,0 +1,116 @@
+{
+ "run": {
+  "createdAt": "2026-11-16T23:08:23Z",
+  "databaseId": 43976597087,
+  "headSha": "807ba1336781394d630d850c6417e0b0a8ee0957",
+  "url": "https://github.com/goome-ui/c-goome/actions/runs/43976597087"
+ },
+ "jobs": {
+  "linux": {
+   "conclusion": "success",
+   "image": "ubuntu-24.04",
+   "image_version": "20261111.370.1",
+   "steps": {
+    "backends.sh": {
+     "ran": 3,
+     "fail": 0
+    },
+    "x11.sh": {
+     "pass": 291,
+     "fail": 0
+    },
+    "wayland.sh": {
+     "pass": 183,
+     "fail": 0
+    },
+    "atspi.sh": {
+     "ok": 20,
+     "fail": 0,
+     "final": true
+    }
+   },
+   "unit": "all good"
+  },
+  "windows": {
+   "conclusion": "success",
+   "image": "windows-2025-vs2026",
+   "image_version": "20261103.298.1",
+   "steps": {
+    "uia.ps1": {
+     "ok": 19,
+     "fail": 0
+    },
+    "win32.ps1": {
+     "pass": 65,
+     "fail": 0,
+     "final": true
+    }
+   },
+   "unit": "all good"
+  },
+  "gfx-macos (macos-latest)": {
+   "conclusion": "success",
+   "image": "macos-26-arm64",
+   "image_version": "20261102.0473.1",
+   "steps": {}
+  },
+  "gfx-macos (macos-15-intel)": {
+   "conclusion": "success",
+   "image": "macos-15",
+   "image_version": "20260824.0482.1",
+   "steps": {}
+  },
+  "gfx-windows": {
+   "conclusion": "success",
+   "image": "windows-2025-vs2026",
+   "image_version": "20261103.298.1",
+   "steps": {}
+  },
+  "gfx-linux": {
+   "conclusion": "success",
+   "image": "ubuntu-24.04",
+   "image_version": "20261111.127.1",
+   "steps": {}
+  },
+  "macos (macos-15-intel)": {
+   "conclusion": "success",
+   "image": "macos-15",
+   "image_version": "20260824.0482.1",
+   "steps": {
+    "macos.sh": {
+     "pass": 29,
+     "fail": 0
+    },
+    "macax.sh": {
+     "ok": 18,
+     "fail": 0,
+     "self_check": false
+    }
+   },
+   "unit": "all good"
+  },
+  "wasm": {
+   "conclusion": "success",
+   "image": "ubuntu-24.04",
+   "image_version": "20261111.370.1",
+   "steps": {}
+  },
+  "macos (macos-latest)": {
+   "conclusion": "success",
+   "image": "macos-26-arm64",
+   "image_version": "20261102.0473.1",
+   "steps": {
+    "macos.sh": {
+     "pass": 29,
+     "fail": 0
+    },
+    "macax.sh": {
+     "ok": 18,
+     "fail": 0,
+     "self_check": false
+    }
+   },
+   "unit": "all good"
+  }
+ }
+}
