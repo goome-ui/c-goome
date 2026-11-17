@@ -28,7 +28,7 @@ def sys_libs(ctx, kind):
     if ctx.plat == "linux":
         return ["-lGL", "-lm", "-lpthread", "-ldl", "-lrt", "-lX11"] if kind == "glfw" else ["-lm", "-lpthread"]
     if ctx.plat == "macos":
-        return ["-framework", "Cocoa", "-framework", "IOKit", "-framework", "CoreVideo", "-framework", "OpenGL", "-lm"] if kind == "glfw" else ["-lm"]
+        return ["-framework", "Cocoa", "-framework", "IOKit", "-framework", "CoreVideo", "-framework", "OpenGL", "-framework", "QuartzCore", "-framework", "Metal", "-lm"] if kind == "glfw" else ["-lm"]
     return ["-lopengl32", "-lgdi32", "-lwinmm"] if kind in ("glfw", "win32") else ["-lwinmm"]
 
 
