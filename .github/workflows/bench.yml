@@ -28,8 +28,10 @@ jobs:
         run: |
           if [ -n "${{ inputs.libs }}" ]; then l="${{ inputs.libs }}"; elif [ -f tools/bench/libs.txt ]; then l=$(cat tools/bench/libs.txt | tr '\n' ' '); else l=""; fi
           echo "list=$l" >> "$GITHUB_OUTPUT"
-      - run: python tools/bench/setup.py ${{ steps.libs.outputs.list }}
+      - shell: bash
+        run: python tools/bench/setup.py ${{ steps.libs.outputs.list }}
       - if: runner.os != 'Linux'
+        shell: bash
         run: python tools/bench/run.py ${{ steps.libs.outputs.list }} --out bench-${{ matrix.os }}.json
       - if: runner.os == 'Linux'
         run: xvfb-run -a -s "-screen 0 1280x800x24" python tools/bench/run.py ${{ steps.libs.outputs.list }} --out bench-${{ matrix.os }}.json
