@@ -9,8 +9,8 @@
 </p>
 
 <p align="center">
-  <img src="https://goome-ui.github.io/docs/assets/badges/c99.svg" alt="C99">
-  <img src="https://goome-ui.github.io/docs/assets/badges/one-file-goome-h.svg" alt="one file">
+  <img src="https://goome.wtf/badges/c99.svg" alt="C99">
+  <img src="https://goome.wtf/badges/one-file-goome-h.svg" alt="one file">
   <img src="https://img.shields.io/badge/Linux-X11%20%2B%20Wayland-1b1d22?style=flat-square&logo=linux&logoColor=white" alt="Linux">
   <img src="https://img.shields.io/badge/Windows-10%20%2F%2011-1b1d22?style=flat-square&logo=windows11&logoColor=white" alt="Windows">
   <img src="https://img.shields.io/badge/macOS-14%2B-1b1d22?style=flat-square&logo=apple&logoColor=white" alt="macOS">
@@ -26,8 +26,8 @@
 </p>
 
 <p align="center">
-  <a href="https://goome-ui.github.io/docs/">Docs</a> &nbsp;·&nbsp;
-  <a href="https://goome-ui.github.io/docs/builder/">UI Builder</a> &nbsp;·&nbsp;
+  <a href="https://goome.wtf/docs/">Docs</a> &nbsp;·&nbsp;
+  <a href="https://goome.wtf/builder/">UI Builder</a> &nbsp;·&nbsp;
   <a href="https://github.com/goome-ui/examples">Examples</a> &nbsp;·&nbsp;
   <a href="https://github.com/goome-ui/csharp-goome">C# + Unity</a> &nbsp;·&nbsp;
   <a href="https://github.com/goome-ui/python-goome">Python</a> &nbsp;·&nbsp;
@@ -36,7 +36,7 @@
 </p>
 
 <p align="center">
-  To see what goome can do, grab one of the <a href="https://goome-ui.github.io/docs/downloads/">ready made apps</a>, like the HUD or the crosshair. To start your own, <code>goome new my-app --lang c</code> from <a href="https://github.com/goome-ui/goome-cli">goome-cli</a> makes it from a <a href="https://goome-ui.github.io/docs/templates/">template</a>.<br>
+  To see what goome can do, grab one of the <a href="https://goome.wtf/docs/downloads/">ready made apps</a>, like the HUD or the crosshair. To start your own, <code>goome new my-app --lang c</code> from <a href="https://github.com/goome-ui/goome-cli">goome-cli</a> makes it from a <a href="https://goome.wtf/docs/templates/">template</a>.<br>
   Questions go in <a href="https://github.com/goome-ui/c-goome/discussions">Discussions</a>. If you want to help, the <a href="https://github.com/goome-ui/c-goome/labels/good%20first%20issue">good first issues</a> are small ones to start with.
 </p>
 
@@ -479,7 +479,7 @@ No os window here at all. It never blocks or starts a thread and doesn't load an
 
 <p align="center">
 Everything is in <a href="include/goome.h">include/goome.h</a>. Plain structs, no callbacks, errors come back as negative <code>GOOME_E*</code> codes and <code>goome_error(g)</code> says what went wrong. Most calls return <code>GOOME_OK</code>, the ones that count stuff (<code>goome_poll</code>, <code>goome_monitors</code>, <code>goome_hit</code>) return the count or 0/1.<br>
-All positions are logical coords. Canvases and grabs carry the scale to real pixels. The <a href="https://goome-ui.github.io/docs/">docs site</a> goes through every function.
+All positions are logical coords. Canvases and grabs carry the scale to real pixels. The <a href="https://goome.wtf/docs/">docs site</a> goes through every function.
 </p>
 
 | | |
@@ -680,7 +680,7 @@ goome_ui_theme_make(&t, 0xFF8B5CF6, 1, 12);
 ```
 
 <p align="center">
-<code>goome_ui_push_theme(u, &t)</code> instead of the last line does it for just a part of the ui. Or pick one of the presets, theyre the same ones the <a href="https://goome-ui.github.io/docs/builder/">ui builder</a> has: <code>goome_ui_theme_preset(&t, GOOME_PRESET_MIDNIGHT)</code>, with DARK, LIGHT, MIDNIGHT, PAPER, MINT, HIGH_CONTRAST and ROSE.<br>
+<code>goome_ui_push_theme(u, &t)</code> instead of the last line does it for just a part of the ui. Or pick one of the presets, theyre the same ones the <a href="https://goome.wtf/builder/">ui builder</a> has: <code>goome_ui_theme_preset(&t, GOOME_PRESET_MIDNIGHT)</code>, with DARK, LIGHT, MIDNIGHT, PAPER, MINT, HIGH_CONTRAST and ROSE.<br>
 <code>goome_ui_scale(u, 1.25)</code> makes every size in the theme bigger at once, for a "bigger ui" setting.<br> <br>
 To change anything else, every size and color lives in the theme and the rest is in the config.<br>
 Sizes: <code>check_size</code>, <code>toggle_w</code>/<code>toggle_h</code>, <code>slider_h</code>, <code>slider_track</code>, <code>knob_size</code>, <code>scroll_w</code>, <code>scroll_min</code>, <code>item_h</code> (every widget row), <code>tab_h</code>, <code>menu_item_h</code>, title bar, menubar and statusbar heights, <code>focus_w</code>/<code>focus_gap</code> for the focus ring, <code>sep_w</code>, <code>grip</code>, tree <code>indent</code>, <code>plot_w</code>, <code>spinner</code>, <code>caret_w</code> (go wide for a block caret), window min size, popup and tooltip offsets and padding, <code>check_radius</code>, <code>tip_radius</code> and <code>shadow_x</code>/<code>shadow_y</code>. The checkbox, toggle, slider, indent and plot ones are at font size 15 and grow with the font. Heights set to 0 come from the font<br>

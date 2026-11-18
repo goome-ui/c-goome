@@ -249,7 +249,7 @@ static void page_numbers(goome_ui *u)
     goome_ui_same_line(u);
     goome_ui_badge(u, "v0.3.0", 0xFFF2C94C);
     goome_ui_space(u, 4);
-    if (goome_ui_link(u, "open the docs")) goome_ui_toast(u, "goome-ui.github.io/docs", 2500);
+    if (goome_ui_link(u, "open the docs")) goome_ui_toast(u, "goome.wtf/docs", 2500);
     goome_ui_same_line(u);
     if (goome_ui_link(u, "report a bug")) goome_ui_toast(u, "github.com/goome-ui/c-goome/issues", 2500);
 }
