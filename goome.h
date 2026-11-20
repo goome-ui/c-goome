@@ -25149,7 +25149,10 @@ static void kb_key(void *d, struct wl_keyboard *kbd, uint32_t serial, uint32_t t
                    {28, 0xff0d, GOOME_K_ENTER}, {96, 0xff8d, GOOME_K_ENTER}, {111, 0xffff, GOOME_K_DELETE}, {102, 0xff50, GOOME_K_HOME},
                    {103, 0xff52, GOOME_K_UP}, {104, 0xff55, GOOME_K_PGUP}, {105, 0xff51, GOOME_K_LEFT}, {106, 0xff53, GOOME_K_RIGHT},
                    {107, 0xff57, GOOME_K_END}, {108, 0xff54, GOOME_K_DOWN}, {109, 0xff56, GOOME_K_PGDN}, {110, 0xff63, GOOME_K_INSERT},
-                   {87, 0xffc8, GOOME_K_F1 + 10}, {88, 0xffc9, GOOME_K_F1 + 11}};
+                   {87, 0xffc8, GOOME_K_F1 + 10}, {88, 0xffc9, GOOME_K_F1 + 11},
+                   {0, 0xff95, GOOME_K_HOME}, {0, 0xff96, GOOME_K_LEFT}, {0, 0xff97, GOOME_K_UP}, {0, 0xff98, GOOME_K_RIGHT},
+                   {0, 0xff99, GOOME_K_DOWN}, {0, 0xff9a, GOOME_K_PGUP}, {0, 0xff9b, GOOME_K_PGDN}, {0, 0xff9c, GOOME_K_END},
+                   {0, 0xff9e, GOOME_K_INSERT}, {0, 0xff9f, GOOME_K_DELETE}};
     wl_keys *k = d;
     k->serial = serial;
     if (state != WL_KEYBOARD_KEY_STATE_PRESSED) {

@@ -135,13 +135,15 @@ hello_run() { # name scale "sway output line" lw lh
   check "$name click next to box not ours" bash -c "! grep -q '^click 600,500' '$O/hello-$T.log'"
   "$S/wl_vptr" "$lw" "$lh" c 220 174 > /dev/null # the type bar
   sleep 0.4
-  "$WTYPE" -s 400 'Hi é!' -k Left -k F5 -M ctrl a -m ctrl -k BackSpace -s 200 -k Escape
+  "$WTYPE" -s 400 'Hi é!' -k Left -k KP_Left -k KP_Delete -k F5 -M ctrl a -m ctrl -k BackSpace -s 200 -k Escape
   sleep 0.8
   check "$name key shift letter" grep -q "^key 104 mods 100 text 'H'" "$O/hello-$T.log"
   check "$name key letter" grep -q "^key 105 mods 0 text 'i'" "$O/hello-$T.log"
   check "$name key non ascii text" grep -q "^key 0 mods 0 text 'é'" "$O/hello-$T.log"
   check "$name key shifted symbol" grep -q "^key 49 mods 100 text '!'" "$O/hello-$T.log"
   check "$name key arrow" grep -q "^key 144 mods 0 text ''" "$O/hello-$T.log"
+  check "$name key numpad left with numlock off" bash -c "[ \$(grep -c \"^key 144 mods 0 text ''\" '$O/hello-$T.log') -ge 2 ]"
+  check "$name key numpad delete with numlock off" grep -q "^key 127 mods 0 text ''" "$O/hello-$T.log"
   check "$name key f5" grep -q "^key 133 mods 0 text ''" "$O/hello-$T.log"
   check "$name key ctrl+a" grep -q "^key 97 mods 200 text ''" "$O/hello-$T.log"
   check "$name key backspace" grep -q "^key 8 mods 0 text ''" "$O/hello-$T.log"
