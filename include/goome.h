@@ -20,7 +20,7 @@
 extern "C" {
 #endif
 
-#define GOOME_VERSION "0.5.3"
+#define GOOME_VERSION "0.5.5"
 
 typedef struct goome goome;
 
