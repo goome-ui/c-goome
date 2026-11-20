@@ -414,6 +414,7 @@ For more control than <code>goome_open_app</code> set <code>.mode = GOOME_MODE_W
 | `ON_TOP` | stays above other windows |
 | `HIDDEN` | starts hidden, `goome_window_show` shows it |
 | `CENTER` | opens in the middle of the screen |
+| `NO_CONSOLE` | windows only: closes the console of a console exe so only the window shows. Only if the process owns the console (double click); started from cmd, PowerShell or Windows Terminal the console stays. Does nothing on other systems |
 
 </div>
 

@@ -29,6 +29,7 @@ static uint32_t fnv(const uint32_t *px, int w, int h, int stride)
 
 static void combos(void)
 {
+    CHECK(GOOME_WINDOW_NO_CONSOLE == 128 && (GOOME_WINDOW_NO_CONSOLE & (GOOME_WINDOW_NO_TITLEBAR | GOOME_WINDOW_CENTER)) == 0);
     int k, m;
     CHECK(goome_parse_combo("alt+h", &k, &m) == GOOME_OK && k == 'h' && m == GOOME_ALT);
     CHECK(goome_parse_combo("Ctrl+Shift+F5", &k, &m) == GOOME_OK && k == GOOME_K_F1 + 4 && m == (GOOME_CTRL | GOOME_SHIFT));

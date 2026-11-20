@@ -27,7 +27,7 @@ void goome_web_done(void);
 
 `goome_open` ignores the size you ask for and uses the browser window. When the window changes size you get a `GOOME_MONITORS` event, like on the desktop.
 
-The window has no title bar of its own: goome leaves out the bar `goome_ui_app` draws (`GOOME_WINDOW_NO_TITLEBAR`, set for you in the web build) and the content fills the whole canvas. The title you pass to `goome_open` becomes the page title. If you draw your own bar with the draw api, you have to skip it yourself.
+The window has no title bar of its own: goome leaves out the bar `goome_ui_app` draws (`GOOME_WINDOW_NO_TITLEBAR`, set for you in the web build) and the content fills the whole canvas. The title you pass to `goome_open` becomes the page title. If you draw your own bar with the draw api, you have to skip it yourself. `GOOME_WINDOW_NO_CONSOLE` is accepted and does nothing here.
 
 `examples/web_counter.c` (widgets), `examples/web_draw.c` (draw api, mouse, wheel, keys, clipboard, cursor), `examples/web_game.c` (a breakout game) and `examples/web_app.c` (a task list with tabs, a table and themes) are all written like this and still build on the desktop.
 
