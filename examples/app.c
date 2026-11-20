@@ -28,6 +28,7 @@ int main(int argc, char **argv)
     int flags = GOOME_WINDOW_RESIZABLE | GOOME_WINDOW_CENTER;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "borderless")) flags |= GOOME_WINDOW_BORDERLESS;
+        if (!strcmp(argv[i], "--no-console")) flags |= GOOME_WINDOW_NO_CONSOLE;
         if (!strcmp(argv[i], "transparent")) flags |= GOOME_WINDOW_TRANSPARENT;
     }
     int small = argc > 1 && !strcmp(argv[argc - 1], "small");

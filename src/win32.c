@@ -569,8 +569,18 @@ static void w32_refresh(goome *g)
 static void w32_close(goome *g);
 static int w32w_open(goome *g);
 
+static void w32_drop_console(goome *g)
+{
+    if (!(g->opts.window_flags & GOOME_WINDOW_NO_CONSOLE)) return;
+    DWORD(WINAPI * procs)(LPDWORD, DWORD) = NULL;
+    W32_LOAD(procs, GetModuleHandleA("kernel32.dll"), "GetConsoleProcessList");
+    DWORD list[2];
+    if (procs && procs(list, 2) == 1) FreeConsole();
+}
+
 static int w32_open(goome *g)
 {
+    w32_drop_console(g);
     if (g->opts.mode == GOOME_MODE_WINDOW) return w32w_open(g);
     if (g->opts.mode != GOOME_MODE_OVERLAY) return gm_fail(g, GOOME_ENOTSUP, "win32 does overlay and window mode");
     memset(&w32, 0, sizeof(w32));

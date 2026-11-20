@@ -1,4 +1,4 @@
-// goome 0.5.3, one file version. https://github.com/goome-ui/c-goome (GPL-3.0)
+// goome 0.5.5, one file version. https://github.com/goome-ui/c-goome (GPL-3.0)
 // in exactly one .c file, before any other include:
 //   #define GOOME_IMPLEMENTATION
 //   #include "goome.h"
@@ -26,7 +26,7 @@
 extern "C" {
 #endif
 
-#define GOOME_VERSION "0.5.3"
+#define GOOME_VERSION "0.5.5"
 
 typedef struct goome goome;
 
@@ -35,6 +35,7 @@ enum { GOOME_MODE_OVERLAY, GOOME_MODE_WINDOW, GOOME_MODE_OFFSCREEN };
 enum {
     GOOME_WINDOW_RESIZABLE = 1, GOOME_WINDOW_BORDERLESS = 2, GOOME_WINDOW_TRANSPARENT = 4,
     GOOME_WINDOW_ON_TOP = 8, GOOME_WINDOW_HIDDEN = 16, GOOME_WINDOW_CENTER = 32, GOOME_WINDOW_NO_TITLEBAR = 64,
+    GOOME_WINDOW_NO_CONSOLE = 128,
 };
 
 enum {
@@ -25149,7 +25150,10 @@ static void kb_key(void *d, struct wl_keyboard *kbd, uint32_t serial, uint32_t t
                    {28, 0xff0d, GOOME_K_ENTER}, {96, 0xff8d, GOOME_K_ENTER}, {111, 0xffff, GOOME_K_DELETE}, {102, 0xff50, GOOME_K_HOME},
                    {103, 0xff52, GOOME_K_UP}, {104, 0xff55, GOOME_K_PGUP}, {105, 0xff51, GOOME_K_LEFT}, {106, 0xff53, GOOME_K_RIGHT},
                    {107, 0xff57, GOOME_K_END}, {108, 0xff54, GOOME_K_DOWN}, {109, 0xff56, GOOME_K_PGDN}, {110, 0xff63, GOOME_K_INSERT},
-                   {87, 0xffc8, GOOME_K_F1 + 10}, {88, 0xffc9, GOOME_K_F1 + 11}};
+                   {87, 0xffc8, GOOME_K_F1 + 10}, {88, 0xffc9, GOOME_K_F1 + 11},
+                   {0, 0xff95, GOOME_K_HOME}, {0, 0xff96, GOOME_K_LEFT}, {0, 0xff97, GOOME_K_UP}, {0, 0xff98, GOOME_K_RIGHT},
+                   {0, 0xff99, GOOME_K_DOWN}, {0, 0xff9a, GOOME_K_PGUP}, {0, 0xff9b, GOOME_K_PGDN}, {0, 0xff9c, GOOME_K_END},
+                   {0, 0xff9e, GOOME_K_INSERT}, {0, 0xff9f, GOOME_K_DELETE}};
     wl_keys *k = d;
     k->serial = serial;
     if (state != WL_KEYBOARD_KEY_STATE_PRESSED) {
@@ -28478,8 +28482,18 @@ static void w32_refresh(goome *g)
 static void w32_close(goome *g);
 static int w32w_open(goome *g);
 
+static void w32_drop_console(goome *g)
+{
+    if (!(g->opts.window_flags & GOOME_WINDOW_NO_CONSOLE)) return;
+    DWORD(WINAPI * procs)(LPDWORD, DWORD) = NULL;
+    W32_LOAD(procs, GetModuleHandleA("kernel32.dll"), "GetConsoleProcessList");
+    DWORD list[2];
+    if (procs && procs(list, 2) == 1) FreeConsole();
+}
+
 static int w32_open(goome *g)
 {
+    w32_drop_console(g);
     if (g->opts.mode == GOOME_MODE_WINDOW) return w32w_open(g);
     if (g->opts.mode != GOOME_MODE_OVERLAY) return gm_fail(g, GOOME_ENOTSUP, "win32 does overlay and window mode");
     memset(&w32, 0, sizeof(w32));
