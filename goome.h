@@ -27645,7 +27645,7 @@ static void gn_save_token(const char *t)
     if (!gn.token_path[0]) return;
     char tmp[1110];
     snprintf(tmp, sizeof(tmp), "%s.tmp", gn.token_path);
-    int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+    int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0600);
     if (fd < 0) return;
     size_t n = strlen(t);
     int ok = write(fd, t, n) == (ssize_t)n;
