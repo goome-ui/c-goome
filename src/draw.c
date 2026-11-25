@@ -1191,6 +1191,7 @@ void goome_draw_poly(goome_canvas *c, const double *xy, int n, uint32_t argb)
             double ta = dr_max(lo, y), tb = dr_min(hi, y + 1.0);
             if (tb <= ta) continue;
             double k = (b[0] - a[0]) / (b[1] - a[1]);
+            if (!dr_ok(k)) continue;
             dr_acc(acc, w, a[0] + (ta - a[1]) * k - x0, a[0] + (tb - a[1]) * k - x0, d * (tb - ta));
         }
         double s = 0;
