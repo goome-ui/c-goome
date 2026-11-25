@@ -290,7 +290,10 @@ static void gm_ctl_read(goome *g)
         ssize_t n = read(g->ctl_fd, g->ctl_buf + g->ctl_len, sizeof(g->ctl_buf) - 1 - (size_t)g->ctl_len);
         if (n <= 0) break;
         g->ctl_len += (int)n;
-        if (g->ctl_len >= (int)sizeof(g->ctl_buf) - 1) g->ctl_buf[g->ctl_len++ - 1] = '\n';
+        if (g->ctl_len >= (int)sizeof(g->ctl_buf) - 1) {
+            g->ctl_buf[g->ctl_len++ - 1] = '\n';
+            break;
+        }
     }
     char *nl;
     while (g->ctl_len > 0 && (nl = memchr(g->ctl_buf, '\n', (size_t)g->ctl_len))) {
