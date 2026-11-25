@@ -675,7 +675,8 @@ double strtod(const char *s, char **end)
     if ((*s | 32) == 'e' && (isdigit(s[1]) || ((s[1] == '-' || s[1] == '+') && isdigit(s[2])))) {
         int eneg = s[1] == '-', e = 0;
         s += isdigit(s[1]) ? 1 : 2;
-        while (isdigit(*s)) e = e * 10 + (*s++ - '0');
+        for (; isdigit(*s); s++)
+            if (e < 10000) e = e * 10 + (*s - '0');
         while (e--) v = eneg ? v / 10 : v * 10;
     }
     if (end) *end = (char *)s;
