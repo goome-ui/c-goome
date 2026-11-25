@@ -1511,7 +1511,7 @@ static char *wl_read_fd(int fd, int ms, size_t *len)
     while (r) {
         long left = end - goome_now_ms();
         struct pollfd p = {fd, POLLIN, 0};
-        if (left <= 0 || poll(&p, 1, (int)left) <= 0) break;
+        if (left <= 0 || n > ((size_t)64 << 20) || poll(&p, 1, (int)left) <= 0) break;
         if (n + 4096 > cap) {
             char *m = realloc(r, cap * 2);
             if (!m) break;
