@@ -14435,7 +14435,7 @@ static int ui_num_text(goome_ui *u, const char *label, uint32_t id, ui_box box, 
 
 static void ui_num_fmt(char *out, int cap, double v, const char *fmt, int whole)
 {
-    if (whole) snprintf(out, (size_t)cap, "%d", (int)v);
+    if (whole) snprintf(out, (size_t)cap, "%d", (int)ui_clamp(v, -2147483647, 2147483647));
     else snprintf(out, (size_t)cap, fmt ? fmt : "%.3f", v);
 }
 
@@ -14490,7 +14490,7 @@ static int ui_dragv(goome_ui *u, const char *label, double *v, double speed, dou
     if (nav && u->nav_dx) *v += u->nav_dx * (whole ? (speed >= 1 ? speed : 1) : speed * 10);
     if (nav && u->nav_home && lo < hi) *v = u->nav_home < 0 ? lo : hi;
     if (lo < hi) *v = ui_clamp(*v, lo, hi);
-    if (whole) *v = ui_floor(*v + 0.5);
+    if (whole) *v = ui_floor(ui_clamp(*v, -2147483647, 2147483647) + 0.5);
     if (*v != old) ch = 1;
     double h = ui_anim(u, s, 0, hov || held), p = ui_anim(u, s, 1, held);
     goome_radii rr = ui_tr(u, th->radius);
