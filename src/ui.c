@@ -658,21 +658,22 @@ static int ui_vis(goome_ui *u, double x, double y, double w, double h)
 
 static uint32_t ui_col(goome_ui *u, uint32_t c) { return u->alpha < 1 ? ui_fade(c, u->alpha) : c; }
 
-static void ui_put(goome_ui *u, int type, double x, double y, double w, double h, goome_radii r, uint32_t c0, uint32_t c1, double e0, double e1)
+static ui_cmd *ui_put(goome_ui *u, int type, double x, double y, double w, double h, goome_radii r, uint32_t c0, uint32_t c1, double e0, double e1)
 {
-    if (!ui_vis(u, x - e0 - 2, y - e0 - 2, w + 2 * e0 + 4, h + 2 * e0 + 4)) return;
+    if (!ui_vis(u, x - e0 - 2, y - e0 - 2, w + 2 * e0 + 4, h + 2 * e0 + 4)) return NULL;
     ui_cmd *c = ui_cmd_new(u, type);
-    if (!c) return;
+    if (!c) return NULL;
     c->a[0] = x, c->a[1] = y, c->a[2] = w, c->a[3] = h, c->a[4] = e0, c->a[5] = e1;
     c->r = r, c->c0 = ui_col(u, c0), c->c1 = ui_col(u, c1);
+    return c;
 }
 static void ui_rect(goome_ui *u, ui_box b, double r, uint32_t col) { ui_put(u, UC_RECT, b.x, b.y, b.w, b.h, goome_radius(r), col, 0, 0, 0); }
 static void ui_rrect(goome_ui *u, ui_box b, goome_radii r, uint32_t col) { ui_put(u, UC_RECT, b.x, b.y, b.w, b.h, r, col, 0, 0, 0); }
 static void ui_outline(goome_ui *u, ui_box b, double r, double w, uint32_t col) { ui_put(u, UC_LINE, b.x, b.y, b.w, b.h, goome_radius(r), col, 0, w, 0); }
 static void ui_grad(goome_ui *u, ui_box b, goome_radii r, uint32_t from, uint32_t to, int side)
 {
-    ui_put(u, UC_GRAD, b.x, b.y, b.w, b.h, r, from, to, 0, 0);
-    if (u->cl->n && u->cl->cmd[u->cl->n - 1].type == UC_GRAD) u->cl->cmd[u->cl->n - 1].flag = side;
+    ui_cmd *c = ui_put(u, UC_GRAD, b.x, b.y, b.w, b.h, r, from, to, 0, 0);
+    if (c) c->flag = side;
 }
 static void ui_shadow(goome_ui *u, ui_box b, double r, double blur, uint32_t col) { ui_put(u, UC_SHADOW, b.x, b.y, b.w, b.h, goome_radius(r), col, 0, blur, 0); }
 static void ui_rline(goome_ui *u, ui_box b, goome_radii r, double w, uint32_t col) { ui_put(u, UC_LINE, b.x, b.y, b.w, b.h, r, col, 0, w, 0); }
@@ -694,26 +695,20 @@ static void ui_ring(goome_ui *u, double cx, double cy, double r, double w, uint3
 static void ui_seg(goome_ui *u, double x0, double y0, double x1, double y1, double w, uint32_t col)
 {
     double x = ui_min(x0, x1), y = ui_min(y0, y1);
-    ui_put(u, UC_SEG, x, y, ui_abs(x1 - x0), ui_abs(y1 - y0), goome_radius(0), col, 0, w, 0);
-    if (u->cl->n && u->cl->cmd[u->cl->n - 1].type == UC_SEG) {
-        ui_cmd *c = &u->cl->cmd[u->cl->n - 1];
-        c->a[0] = x0, c->a[1] = y0, c->a[2] = x1, c->a[3] = y1;
-    }
+    ui_cmd *c = ui_put(u, UC_SEG, x, y, ui_abs(x1 - x0), ui_abs(y1 - y0), goome_radius(0), col, 0, w, 0);
+    if (c) c->a[0] = x0, c->a[1] = y0, c->a[2] = x1, c->a[3] = y1;
 }
 static void ui_tri(goome_ui *u, double x0, double y0, double x1, double y1, double x2, double y2, uint32_t col)
 {
     double x = ui_min(x0, ui_min(x1, x2)), y = ui_min(y0, ui_min(y1, y2));
-    ui_put(u, UC_TRI, x, y, ui_max(x0, ui_max(x1, x2)) - x, ui_max(y0, ui_max(y1, y2)) - y, goome_radius(0), col, 0, 0, 0);
-    if (u->cl->n && u->cl->cmd[u->cl->n - 1].type == UC_TRI) {
-        ui_cmd *c = &u->cl->cmd[u->cl->n - 1];
-        c->a[0] = x0, c->a[1] = y0, c->a[2] = x1, c->a[3] = y1, c->a[4] = x2, c->a[5] = y2;
-    }
+    ui_cmd *c = ui_put(u, UC_TRI, x, y, ui_max(x0, ui_max(x1, x2)) - x, ui_max(y0, ui_max(y1, y2)) - y, goome_radius(0), col, 0, 0, 0);
+    if (c) c->a[0] = x0, c->a[1] = y0, c->a[2] = x1, c->a[3] = y1, c->a[4] = x2, c->a[5] = y2;
 }
 static void ui_bitmap(goome_ui *u, const goome_bitmap *b, ui_box d, goome_radii r, uint32_t tint)
 {
     if (!b || !b->px || b->w <= 0 || b->h <= 0) return;
-    ui_put(u, UC_BITMAP, d.x, d.y, d.w, d.h, r, tint, 0, 0, 0);
-    if (u->cl->n && u->cl->cmd[u->cl->n - 1].type == UC_BITMAP) u->cl->cmd[u->cl->n - 1].bm = b;
+    ui_cmd *c = ui_put(u, UC_BITMAP, d.x, d.y, d.w, d.h, r, tint, 0, 0, 0);
+    if (c) c->bm = b;
 }
 
 static double ui_tw(goome_ui *u, const char *s, int n, double size)
@@ -3770,11 +3765,8 @@ static void ui_poly(goome_ui *u, const double *xy, int n, uint32_t col)
 
 static void ui_nine(goome_ui *u, const goome_skin *k, ui_box b)
 {
-    ui_put(u, UC_NINE, b.x, b.y, b.w, b.h, goome_radius(0), 0, 0, 0, 0);
-    if (u->cl->n && u->cl->cmd[u->cl->n - 1].type == UC_NINE) {
-        ui_cmd *c = &u->cl->cmd[u->cl->n - 1];
-        c->bm = k->bm, c->r.tl = k->l, c->r.tr = k->t, c->r.br = k->r, c->r.bl = k->b;
-    }
+    ui_cmd *c = ui_put(u, UC_NINE, b.x, b.y, b.w, b.h, goome_radius(0), 0, 0, 0, 0);
+    if (c) c->bm = k->bm, c->r.tl = k->l, c->r.tr = k->t, c->r.br = k->r, c->r.bl = k->b;
 }
 
 static double ui_skin_r(const goome_skin *k, ui_box b)
