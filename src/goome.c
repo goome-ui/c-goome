@@ -866,7 +866,9 @@ int goome_hit(goome *g, double x, double y)
 
 int gm_ime_push(goome *g, int type, const char *s, int n, int cursor)
 {
+    const char *z = n > 0 ? memchr(s, 0, (size_t)n) : NULL;
     if (n < 0) n = (int)strlen(s);
+    else if (z) n = (int)(z - s);
     if (g->ime_qlen + (size_t)n + 1 > g->ime_qcap) {
         size_t cap = (g->ime_qlen + (size_t)n + 1) * 2;
         char *q = realloc(g->ime_q, cap);
