@@ -147,7 +147,7 @@ typedef struct {
     ID3D12Resource *tex, *up[8];
     unsigned char *mem[8];
     int n, cur, tw, th, fresh;
-    gm_dx12_dead dead[32];
+    gm_dx12_dead dead[96];
 } gm_dx12;
 
 static gm_dx12 gm_dx12_all[8];
@@ -162,7 +162,7 @@ static gm_dx12 *gm_dx12_find(goome *g)
 static void gm_dx12_bury(gm_dx12 *d, ID3D12Resource *r)
 {
     if (!r) return;
-    for (int i = 0; i < 32; i++)
+    for (int i = 0; i < 96; i++)
         if (!d->dead[i].r) {
             d->dead[i].r = r, d->dead[i].left = d->n + 1;
             return;
@@ -294,7 +294,7 @@ void goome_dx12_render(goome *g, ID3D12GraphicsCommandList *cl)
     gm_dx12 *d = gm_dx12_find(g);
     goome_image f;
     if (!d || !cl) return;
-    for (int i = 0; i < 32; i++)
+    for (int i = 0; i < 96; i++)
         if (d->dead[i].r && --d->dead[i].left <= 0) GM_REL(d->dead[i].r);
     if (goome_frame(g, &f) != GOOME_OK || f.w <= 0 || f.h <= 0) return;
     goome_rect r;
@@ -343,7 +343,7 @@ void goome_dx12_shutdown(goome *g)
     if (!d) return;
     GM_REL(d->tex);
     for (int i = 0; i < 8; i++) GM_REL(d->up[i]);
-    for (int i = 0; i < 32; i++) GM_REL(d->dead[i].r);
+    for (int i = 0; i < 96; i++) GM_REL(d->dead[i].r);
     GM_REL(d->pso), GM_REL(d->root), GM_REL(d->heap), GM_REL(d->dev);
     memset(d, 0, sizeof(*d));
 }
