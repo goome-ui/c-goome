@@ -29087,9 +29087,13 @@ static int w32_clip_take(goome *g, HWND h, char **out)
     const WCHAR *ws = d ? GlobalLock(d) : NULL;
     int e = GOOME_OK;
     if (ws) {
-        int n = WideCharToMultiByte(CP_UTF8, 0, ws, -1, NULL, 0, NULL, NULL);
-        char *s = n > 0 ? malloc((size_t)n) : NULL;
-        if (s && WideCharToMultiByte(CP_UTF8, 0, ws, -1, s, n, NULL, NULL) > 0) {
+        size_t max = GlobalSize(d) / sizeof(WCHAR), wn = 0;
+        if (max > 0x1FFFFFFF) max = 0x1FFFFFFF;
+        while (wn < max && ws[wn]) wn++;
+        int n = wn ? WideCharToMultiByte(CP_UTF8, 0, ws, (int)wn, NULL, 0, NULL, NULL) : 0;
+        char *s = !wn || n > 0 ? malloc((size_t)n + 1) : NULL;
+        if (s && (!wn || WideCharToMultiByte(CP_UTF8, 0, ws, (int)wn, s, n, NULL, NULL) > 0)) {
+            s[n] = 0;
             int k = 0;
             for (int i = 0; s[i]; i++)
                 if (!(s[i] == '\r' && s[i + 1] == '\n')) s[k++] = s[i];
@@ -29097,7 +29101,7 @@ static int w32_clip_take(goome *g, HWND h, char **out)
             *out = s;
         } else {
             free(s);
-            if (n > 0) e = gm_fail(g, GOOME_ENOMEM, "no memory for the clipboard");
+            if (!wn || n > 0) e = gm_fail(g, GOOME_ENOMEM, "no memory for the clipboard");
         }
         GlobalUnlock(d);
     }
