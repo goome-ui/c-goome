@@ -26701,11 +26701,20 @@ static int wl_write_all(int fd, const char *s, size_t n)
     sigaddset(&pipe_set, SIGPIPE);
     sigprocmask(SIG_BLOCK, &pipe_set, &old);
     int ok = 1;
+    long end = goome_now_ms() + 1000;
     while (n && ok) {
+        struct pollfd p = {fd, POLLOUT, 0};
+        long left = end - goome_now_ms();
+        int ready = left > 0 ? poll(&p, 1, (int)left) : 0;
+        if (ready < 0 && errno == EINTR) continue;
+        if (ready <= 0) {
+            ok = 0;
+            break;
+        }
         ssize_t r = write(fd, s, n);
-        if (r < 0 && errno == EINTR) continue;
+        if (r < 0 && (errno == EINTR || errno == EAGAIN)) continue;
         if (r <= 0) ok = 0;
-        else s += r, n -= (size_t)r;
+        else s += r, n -= (size_t)r, end = goome_now_ms() + 1000;
     }
     struct timespec zero = {0, 0};
     while (sigtimedwait(&pipe_set, NULL, &zero) > 0) {
@@ -26719,7 +26728,7 @@ static void ds_send(void *d, struct wl_data_source *s, const char *m, int32_t fd
 {
     wl_win *w = d;
     int fl = fcntl(fd, F_GETFL);
-    if (fl >= 0) fcntl(fd, F_SETFL, fl & ~O_NONBLOCK);
+    if (fl >= 0) fcntl(fd, F_SETFL, fl | O_NONBLOCK);
     const char *t = w->g->clip ? w->g->clip : "";
     wl_write_all(fd, t, strlen(t));
     close(fd);
