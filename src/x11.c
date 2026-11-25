@@ -948,7 +948,7 @@ static int x11_wm_on(x11_dpy *d, x11_xid root)
     x11_err = 0;
     int r = X11.GetWindowProperty(d, root, X11.InternAtom(d, "_NET_SUPPORTING_WM_CHECK", 0), 0, 1, 0, 33, &type, &fmt, &n, &after,
                                   (unsigned char **)&w);
-    int yes = r == 0 && !x11_err && w && n == 1 && *w;
+    int yes = r == 0 && !x11_err && w && fmt == 32 && n == 1 && *w;
     if (w) X11.Free(w);
     return yes;
 }
@@ -1040,7 +1040,7 @@ static x11_xid x11_active(void)
     unsigned long n = 0, after = 0;
     x11_err = 0;
     if (X11.GetWindowProperty(x11.dpy, x11.root, X11.InternAtom(x11.dpy, "_NET_ACTIVE_WINDOW", 0), 0, 1, 0, 33, &type, &fmt, &n, &after,
-                              (unsigned char **)&w) == 0 && !x11_err && w && n == 1)
+                              (unsigned char **)&w) == 0 && !x11_err && w && fmt == 32 && n == 1)
         got = *w;
     if (w) X11.Free(w);
     if (!got) X11.GetInputFocus(x11.dpy, &got, &rev);
@@ -1540,7 +1540,7 @@ static int x11_win_has_uris(x11_win *w, const long *l)
     unsigned long n = 0, after = 0;
     x11_err = 0;
     X11.GetWindowProperty(w->dpy, (x11_xid)l[0], w->a[X11_A_TYPELIST], 0, 256, 0, X11_XA_ATOM, &type, &fmt, &n, &after, (unsigned char **)&list);
-    for (unsigned long i = 0; list && !x11_err && i < n; i++)
+    for (unsigned long i = 0; list && !x11_err && fmt == 32 && i < n; i++)
         if (list[i] == w->a[X11_A_URILIST]) ok = 1;
     if (list) X11.Free(list);
     return ok;
@@ -1742,7 +1742,7 @@ static int x11_win_get_state(x11_win *w)
     x11_xid type = 0, *st = NULL;
     int fmt = 0, max = 0, full = 0, hid = 0;
     unsigned long n = 0, after = 0;
-    if (X11.GetWindowProperty(w->dpy, w->win, w->a[X11_A_STATE], 0, 64, 0, X11_XA_ATOM, &type, &fmt, &n, &after, (unsigned char **)&st) == 0 && st)
+    if (X11.GetWindowProperty(w->dpy, w->win, w->a[X11_A_STATE], 0, 64, 0, X11_XA_ATOM, &type, &fmt, &n, &after, (unsigned char **)&st) == 0 && st && fmt == 32)
         for (unsigned long i = 0; i < n; i++) {
             if (st[i] == w->a[X11_A_MAXV] || st[i] == w->a[X11_A_MAXH]) max++;
             if (st[i] == w->a[X11_A_FULL]) full = 1;
@@ -1752,7 +1752,7 @@ static int x11_win_get_state(x11_win *w)
     long *ws = NULL;
     n = 0;
     if (X11.GetWindowProperty(w->dpy, w->win, w->a[X11_A_WM_STATE], 0, 2, 0, w->a[X11_A_WM_STATE], &type, &fmt, &n, &after, (unsigned char **)&ws) == 0 && ws &&
-        n && ws[0] == 3)
+        fmt == 32 && n && ws[0] == 3)
         hid = 1;
     if (ws) X11.Free(ws);
     return hid ? GOOME_STATE_MINIMIZED : full ? GOOME_STATE_FULLSCREEN : max == 2 ? GOOME_STATE_MAXIMIZED : GOOME_STATE_NORMAL;
