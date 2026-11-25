@@ -109,6 +109,15 @@ static void *w32_sym(HMODULE m, const char *name)
         memcpy(&(dst), &w32_p_, sizeof(dst)); \
     } while (0)
 
+static HMODULE w32_sysdll(const char *name)
+{
+    char p[MAX_PATH + 32];
+    UINT n = GetSystemDirectoryA(p, MAX_PATH);
+    if (!n || n >= MAX_PATH) return NULL;
+    snprintf(p + n, sizeof(p) - n, "\\%s", name);
+    return LoadLibraryA(p);
+}
+
 static int w32_load_gdi(w32_gdi_fns *f, HMODULE *dll)
 {
     if (*dll) return 1;
@@ -587,7 +596,7 @@ static int w32_open(goome *g)
     w32.g = g;
     if (!w32_load_gdi(&w32.gdi, &w32.gdi_dll)) return gm_fail(g, GOOME_ENODISPLAY, "cant load gdi32.dll");
     HMODULE u = GetModuleHandleA("user32.dll");
-    w32.shcore = LoadLibraryA("shcore.dll");
+    w32.shcore = w32_sysdll("shcore.dll");
     w32.ntdll = GetModuleHandleA("ntdll.dll");
     W32_LOAD(w32.ulw_indirect, u, "UpdateLayeredWindowIndirect");
     W32_LOAD(w32.set_affinity, u, "SetWindowDisplayAffinity");
@@ -1492,7 +1501,7 @@ static int w32w_load(goome *g)
     memset(&w32x, 0, sizeof(w32x));
     if (!w32_load_gdi(&w32x.gdi, &w32x.gdi_dll)) return gm_fail(g, GOOME_ENODISPLAY, "cant load gdi32.dll");
     HMODULE u = GetModuleHandleA("user32.dll");
-    w32x.shcore = LoadLibraryA("shcore.dll");
+    w32x.shcore = w32_sysdll("shcore.dll");
     W32_LOAD(w32x.dpi_for_win, u, "GetDpiForWindow");
     W32_LOAD(w32x.adjust, u, "AdjustWindowRectExForDpi");
     W32_LOAD(w32x.ulw_indirect, u, "UpdateLayeredWindowIndirect");
