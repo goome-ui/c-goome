@@ -7699,6 +7699,9 @@ static goome_font *ft_new(const uint8_t *d, size_t n, uint8_t *own, int index, v
     goome_font *f = calloc(1, sizeof(*f));
     if (!f) {
         free(own);
+#if !defined(_WIN32) && (defined(__unix__) || defined(__APPLE__))
+        if (map) munmap(map, n);
+#endif
         return NULL;
     }
     f->d = d, f->n = n, f->own = own, f->map = map, f->maplen = map ? n : 0;
@@ -7813,9 +7816,7 @@ static goome_font *ft_map_load(const char *path, int index)
     void *m = mmap(NULL, n, PROT_READ, MAP_PRIVATE, fd, 0);
     close(fd);
     if (m == MAP_FAILED) return NULL;
-    goome_font *f = ft_new(m, n, NULL, index, m);
-    if (!f) munmap(m, n);
-    return f;
+    return ft_new(m, n, NULL, index, m);
 #else
     return goome_font_load_index(path, index);
 #endif
