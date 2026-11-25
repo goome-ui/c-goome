@@ -191,7 +191,7 @@
       state.composing = false;
       push(T.preedit, 0, 0, 0, 0, 0, 0, "");
       const t = e.data || "";
-      for (const piece of t.match(/[\s\S]{1,16}/g) || []) push(T.text, 0, 0, 0, 0, 0, 0, piece);
+      for (const piece of t.match(/[\s\S]{1,15}/gu) || []) push(T.text, 0, 0, 0, 0, 0, 0, piece);
       input.value = "";
     });
     input.addEventListener("input", () => {
