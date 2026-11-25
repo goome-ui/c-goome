@@ -198,14 +198,16 @@ int goome_glfw_key(goome *g, int key, int scancode, int action, int mods)
 int goome_glfw_char(goome *g, unsigned int c)
 {
     if (!gfw_ours(g)) return 0;
-    int eaten = gfw_wants_keys();
-    if (c < 32 || c == 127 || c > 0x10FFFF || (gfw.mods & (GOOME_CTRL | GOOME_ALT | GOOME_SUPER))) return eaten;
+    int eaten = gfw_wants_keys(), m = gfw.mods;
+    if (m & GOOME_ALT) m &= ~(GOOME_CTRL | GOOME_ALT);
+    if (c < 32 || c == 127 || c > 0x10FFFF || (m & (GOOME_CTRL | GOOME_SUPER))) return eaten;
     char t[8] = {0};
     if (c < 0x80) t[0] = (char)c;
     else if (c < 0x800) t[0] = (char)(0xC0 | c >> 6), t[1] = (char)(0x80 | (c & 63));
     else if (c < 0x10000) t[0] = (char)(0xE0 | c >> 12), t[1] = (char)(0x80 | ((c >> 6) & 63)), t[2] = (char)(0x80 | (c & 63));
     else t[0] = (char)(0xF0 | c >> 18), t[1] = (char)(0x80 | ((c >> 12) & 63)), t[2] = (char)(0x80 | ((c >> 6) & 63)), t[3] = (char)(0x80 | (c & 63));
     int k = c < 128 ? (int)c : 0, keep = gfw.mods;
+    gfw.mods = m;
     if (k >= 'A' && k <= 'Z') k += 32, gfw.mods |= GOOME_SHIFT;
     gfw_push(GOOME_KEY, gfw.mx, gfw.my, 0, 0, k, t);
     gfw.mods = keep;
