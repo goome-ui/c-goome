@@ -831,7 +831,7 @@ int goome_frame_copy(goome *g, void *dst, int dst_stride_bytes, int format, cons
     int e = goome_frame(g, &f);
     if (e != GOOME_OK) return e;
     goome_rect a = r ? *r : (goome_rect){0, 0, f.w, f.h};
-    if (a.x < 0 || a.y < 0 || a.w <= 0 || a.h <= 0 || a.x + a.w > f.w || a.y + a.h > f.h) return gm_fail(g, GOOME_EARG, "frame_copy: rect is off the %dx%d frame", f.w, f.h);
+    if (a.x < 0 || a.y < 0 || a.w <= 0 || a.h <= 0 || a.w > f.w - a.x || a.h > f.h - a.y) return gm_fail(g, GOOME_EARG, "frame_copy: rect is off the %dx%d frame", f.w, f.h);
     if (dst_stride_bytes < a.w * 4) return gm_fail(g, GOOME_EARG, "frame_copy: stride %d is too small for %d px", dst_stride_bytes, a.w);
     int rgb = format == GOOME_FMT_RGBA_PREMUL || format == GOOME_FMT_RGBA, un = format >= GOOME_FMT_BGRA;
     for (int y = 0; y < a.h; y++) {
