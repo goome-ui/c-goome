@@ -47,6 +47,7 @@ static struct {
     BOOL(WINAPI *listening)(void);
     HRESULT(WINAPI *disconnect)(void *);
     BSTR(WINAPI *bstr)(const OLECHAR *);
+    void(WINAPI *bfree)(BSTR);
     SAFEARRAY *(WINAPI *arr)(VARTYPE, LONG, ULONG);
     HRESULT(WINAPI *put)(SAFEARRAY *, LONG *, void *);
 } ua_lib;
@@ -80,6 +81,7 @@ static int ua_load(void)
     ua_lib.listening = (BOOL(WINAPI *)(void))(void (*)(void))GetProcAddress(ua_lib.core, "UiaClientsAreListening");
     ua_lib.disconnect = (HRESULT(WINAPI *)(void *))(void (*)(void))GetProcAddress(ua_lib.core, "UiaDisconnectProvider");
     ua_lib.bstr = (BSTR(WINAPI *)(const OLECHAR *))(void (*)(void))GetProcAddress(ua_lib.ole, "SysAllocString");
+    ua_lib.bfree = (void(WINAPI *)(BSTR))(void (*)(void))GetProcAddress(ua_lib.ole, "SysFreeString");
     ua_lib.arr = (SAFEARRAY * (WINAPI *)(VARTYPE, LONG, ULONG))(void (*)(void))GetProcAddress(ua_lib.ole, "SafeArrayCreateVector");
     ua_lib.put = (HRESULT(WINAPI *)(SAFEARRAY *, LONG *, void *))(void (*)(void))GetProcAddress(ua_lib.ole, "SafeArrayPutElement");
     ua_lib.ok = ua_lib.ret && ua_lib.host && ua_lib.raise && ua_lib.prop && ua_lib.bstr && ua_lib.arr && ua_lib.put;
@@ -680,6 +682,7 @@ void gm_axp_event(goome *g, int ev, int i, int old)
     case GM_AXE_NAME:
         V_VT(&v) = VT_BSTR, V_BSTR(&v) = ua_bstr(a->n[i].label, -1);
         ua_changed(h, a->n[i].id, 30005, v);
+        if (ua_lib.bfree) ua_lib.bfree(V_BSTR(&v));
         break;
     case GM_AXE_VALUE:
         if (a->x[i].kind & GM_AXK_RANGE) {
@@ -690,6 +693,7 @@ void gm_axp_event(goome *g, int ev, int i, int old)
             const char *s = gm_ax_str(a, i, &len);
             V_VT(&v) = VT_BSTR, V_BSTR(&v) = ua_bstr(s, len);
             ua_changed(h, a->n[i].id, 30045, v);
+            if (ua_lib.bfree) ua_lib.bfree(V_BSTR(&v));
         }
         break;
     case GM_AXE_STATE: {
