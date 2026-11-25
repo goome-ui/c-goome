@@ -486,6 +486,7 @@ int vsnprintf(char *buf, size_t cap, const char *f, va_list ap)
                 if (prec < 0) prec = -1;
             } else
                 while (*f >= '0' && *f <= '9') prec = prec * 10 + *f++ - '0';
+            if (prec > 1000) prec = 1000;
         }
         for (;; f++) {
             if (*f == 'l') lng++;
