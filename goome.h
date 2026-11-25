@@ -13575,8 +13575,10 @@ static char *ui_ed_paste(goome_ui *u, int *n)
     if (!t) return NULL;
     if (got < (int)sizeof(small)) memcpy(t, small, (size_t)got + 1);
     else {
-        got = goome_clipboard_get(u->g, t, got + 1);
+        int room = got;
+        got = goome_clipboard_get(u->g, t, room + 1);
         if (got < 0) got = 0;
+        if (got > room) got = room;
     }
     char *src = malloc((size_t)got + 1);
     if (!src) {
