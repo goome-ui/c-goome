@@ -11431,6 +11431,22 @@ int goome_ui_radio(goome_ui *u, const char *label, int *v, int value)
     return ch;
 }
 
+static const char *ui_fmt(const char *fmt, const char *def)
+{
+    int n = 0;
+    for (const char *p = fmt; p && *p; p++) {
+        if (*p != '%') continue;
+        if (*++p == '%') continue;
+        p += strspn(p, "-+ #0");
+        p += strspn(p, "0123456789");
+        if (*p == '.') p++, p += strspn(p, "0123456789");
+        if (*p == 'l') p++;
+        if (!*p || !strchr("eEfFgGaA", *p)) return def;
+        n++;
+    }
+    return fmt && n <= 1 ? fmt : def;
+}
+
 static int ui_slide(goome_ui *u, uint32_t id, const char *label, double *v, double lo, double hi, const char *fmt, int whole)
 {
     const goome_theme *th = &u->th;
@@ -11458,7 +11474,7 @@ static int ui_slide(goome_ui *u, uint32_t id, const char *label, double *v, doub
     if (whole) *v = ui_floor(*v + 0.5);
     char val[64];
     if (whole) snprintf(val, sizeof(val), "%d", (int)*v);
-    else snprintf(val, sizeof(val), fmt ? fmt : "%.2f", *v);
+    else snprintf(val, sizeof(val), ui_fmt(fmt, "%.2f"), *v);
     if (ui_ax_slider(u, id, b, label, n, v, lo, hi, val)) ch = 1;
     double cur = span != 0 ? ui_clamp((*v - lo) / span, 0, 1) : 0;
     int fresh;
@@ -14437,7 +14453,7 @@ static int ui_num_text(goome_ui *u, const char *label, uint32_t id, ui_box box, 
 static void ui_num_fmt(char *out, int cap, double v, const char *fmt, int whole)
 {
     if (whole) snprintf(out, (size_t)cap, "%d", (int)ui_clamp(v, -2147483647, 2147483647));
-    else snprintf(out, (size_t)cap, fmt ? fmt : "%.3f", v);
+    else snprintf(out, (size_t)cap, ui_fmt(fmt, "%.3f"), v);
 }
 
 static void ui_num_start(goome_ui *u, uint32_t id, double v, const char *fmt, int whole)
