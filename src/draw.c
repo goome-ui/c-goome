@@ -26,6 +26,8 @@ static inline double dr_ceil(double v)
     double t = (double)(long long)v;
     return t < v ? t + 1 : t;
 }
+static inline int dr_fl(double v) { return !(v > -1e9) ? -1000000000 : v > 1e9 ? 1000000000 : (int)dr_floor(v); }
+static inline int dr_cl(double v) { return !(v > -1e9) ? -1000000000 : v > 1e9 ? 1000000000 : (int)dr_ceil(v); }
 static inline double dr_min(double a, double b) { return a < b ? a : b; }
 static inline double dr_max(double a, double b) { return a > b ? a : b; }
 static inline int dr_ok(double v) { return v == v && v < 1e15 && v > -1e15; }
@@ -132,7 +134,7 @@ static void dr_fill_span(goome_canvas *c, int y, int xa, int xb, uint32_t src)
 
 void goome_canvas_blit(goome_canvas *dst, const goome_canvas *src, double alpha, double dx, double dy)
 {
-    int a = (int)(alpha * 256 + 0.5);
+    int a = !(alpha > 0) ? 0 : alpha > 1 ? 256 : (int)(alpha * 256 + 0.5);
     if (!dst || !src || !dst->px || !src->px || a <= 0) return;
     if (a > 256) a = 256;
     double fx = (src->ox + dx - dst->ox) * dst->scale, fy = (src->oy + dy - dst->oy) * dst->scale;
@@ -217,8 +219,7 @@ static void dr_rect_fill(goome_canvas *c, dr_rect r, uint32_t argb)
     dr_to_px(c, r.x, r.y, &x0, &y0);
     dr_to_px(c, r.x + r.w, r.y + r.h, &x1, &y1);
     if (!dr_ok(x0) || !dr_ok(y0) || !dr_ok(x1) || !dr_ok(y1)) return;
-    x0 = dr_max(x0, -1e9), y0 = dr_max(y0, -1e9), x1 = dr_min(x1, 1e9), y1 = dr_min(y1, 1e9);
-    int ix0 = (int)dr_floor(x0), iy0 = (int)dr_floor(y0), ix1 = (int)dr_ceil(x1), iy1 = (int)dr_ceil(y1);
+    int ix0 = dr_fl(x0), iy0 = dr_fl(y0), ix1 = dr_cl(x1), iy1 = dr_cl(y1);
     if (ix0 < 0) ix0 = 0;
     if (iy0 < 0) iy0 = 0;
     if (ix1 > c->w) ix1 = c->w;
@@ -226,7 +227,7 @@ static void dr_rect_fill(goome_canvas *c, dr_rect r, uint32_t argb)
     uint32_t solid = dr_premul(argb, 1);
     for (int y = iy0; y < iy1; y++) {
         double cy = dr_min(y + 1, y1) - dr_max(y, y0);
-        int fa = (int)dr_ceil(x0), fb = (int)dr_floor(x1);
+        int fa = dr_cl(x0), fb = dr_fl(x1);
         if (fa < ix0) fa = ix0;
         if (fb > ix1) fb = ix1;
         if (cy >= 1 && fb > fa) {
@@ -256,12 +257,12 @@ static void dr_round_rect(goome_canvas *c, dr_rect r, double rad, uint32_t argb)
     dr_to_px(c, r.x, r.y, &x0, &y0);
     dr_to_px(c, r.x + r.w, r.y + r.h, &x1, &y1);
     rad *= c->scale;
-    if (!dr_ok(x0) || !dr_ok(y0) || !dr_ok(x1) || !dr_ok(y1)) return; // nan turns into garbage ints below
-    int ya = (int)dr_max(0, dr_floor(y0)), yb = (int)dr_min(c->h, dr_ceil(y1)), xa = (int)dr_max(0, dr_floor(x0)), xb = (int)dr_min(c->w, dr_ceil(x1));
+    if (!dr_ok(x0) || !dr_ok(y0) || !dr_ok(x1) || !dr_ok(y1) || !dr_ok(rad)) return; // nan turns into garbage ints below
+    int ya = dr_fl(dr_max(0, y0)), yb = dr_cl(dr_min(c->h, y1)), xa = dr_fl(dr_max(0, x0)), xb = dr_cl(dr_min(c->w, x1));
     uint32_t solid = dr_premul(argb, 1);
     for (int y = ya; y < yb; y++) {
         int inner = y >= y0 + rad && y + 1 <= y1 - rad;
-        int fa = (int)dr_ceil(inner ? x0 : x0 + rad), fb = (int)dr_floor(inner ? x1 : x1 - rad);
+        int fa = dr_cl(inner ? x0 : x0 + rad), fb = dr_fl(inner ? x1 : x1 - rad);
         if (y < y0 || y + 1 > y1) fa = fb = 0;
         if (fa < xa) fa = xa;
         if (fb > xb) fb = xb;
@@ -304,8 +305,8 @@ void goome_draw_line(goome_canvas *c, double lx0, double ly0, double lx1, double
     dr_to_px(c, lx1, ly1, &x1, &y1);
     double hw = w * c->scale / 2;
     if (!dr_ok(x0) || !dr_ok(y0) || !dr_ok(x1) || !dr_ok(y1) || !dr_ok(hw)) return;
-    int bx0 = (int)dr_max(0, dr_floor(dr_min(x0, x1) - hw - 1)), bx1 = (int)dr_min(c->w, dr_ceil(dr_max(x0, x1) + hw + 1));
-    int by0 = (int)dr_max(0, dr_floor(dr_min(y0, y1) - hw - 1)), by1 = (int)dr_min(c->h, dr_ceil(dr_max(y0, y1) + hw + 1));
+    int bx0 = dr_fl(dr_max(0, dr_min(x0, x1) - hw - 1)), bx1 = dr_cl(dr_min(c->w, dr_max(x0, x1) + hw + 1));
+    int by0 = dr_fl(dr_max(0, dr_min(y0, y1) - hw - 1)), by1 = dr_cl(dr_min(c->h, dr_max(y0, y1) + hw + 1));
     for (int y = by0; y < by1; y++)
         for (int x = bx0; x < bx1; x++) {
             double d = dr_seg_dist(x + 0.5, y + 0.5, x0, y0, x1, y1);
@@ -332,8 +333,8 @@ void goome_draw_triangle(goome_canvas *c, double ax, double ay, double bx, doubl
         cy = ty;
     }
     if (!dr_ok(ax + ay + bx + by + cx + cy)) return;
-    int x0 = (int)dr_max(0, dr_floor(dr_min(ax, dr_min(bx, cx)))), x1 = (int)dr_min(c->w, dr_ceil(dr_max(ax, dr_max(bx, cx))));
-    int y0 = (int)dr_max(0, dr_floor(dr_min(ay, dr_min(by, cy)))), y1 = (int)dr_min(c->h, dr_ceil(dr_max(ay, dr_max(by, cy))));
+    int x0 = dr_fl(dr_max(0, dr_min(ax, dr_min(bx, cx)))), x1 = dr_cl(dr_min(c->w, dr_max(ax, dr_max(bx, cx))));
+    int y0 = dr_fl(dr_max(0, dr_min(ay, dr_min(by, cy)))), y1 = dr_cl(dr_min(c->h, dr_max(ay, dr_max(by, cy))));
     for (int y = y0; y < y1; y++)
         for (int x = x0; x < x1; x++) {
             int in = 0;
@@ -391,8 +392,10 @@ double goome_draw_text(goome_canvas *c, double lx, double ly, const char *s, int
         int ch = (unsigned char)*s;
         if (ch < 32 || ch > 126) ch = '?';
         const gm_glyph *g = &f->glyphs[ch - 32];
-        if (f->px > 1 && lum > 300) dr_glyph(c, f, g, (int)x + f->px * sc, (int)y + f->px * sc, sc, sh);
-        dr_glyph(c, f, g, (int)x, (int)y, sc, argb);
+        if (x > -1e9 && x < 1e9 && y > -1e9 && y < 1e9) {
+            if (f->px > 1 && lum > 300) dr_glyph(c, f, g, (int)x + f->px * sc, (int)y + f->px * sc, sc, sh);
+            dr_glyph(c, f, g, (int)x, (int)y, sc, argb);
+        }
         x += g->adv * sc;
         lx += g->adv * sc / c->scale;
     }
@@ -430,9 +433,6 @@ void goome_draw_image(goome_canvas *c, double x, double y, double w, double h, c
 }
 
 void goome_erase(goome_canvas *c, double x, double y, double w, double h) { dr_erase(c, (dr_rect){x, y, w, h}); }
-
-static inline int dr_fl(double v) { return v < -1e9 ? -1000000000 : v > 1e9 ? 1000000000 : (int)dr_floor(v); }
-static inline int dr_cl(double v) { return v < -1e9 ? -1000000000 : v > 1e9 ? 1000000000 : (int)dr_ceil(v); }
 
 // 1/sqrt guess from the exponent bits, then newton without divides, ~1e-11 off
 static double dr_rt(double v)
@@ -975,11 +975,11 @@ void goome_draw_shadow(goome_canvas *c, double x, double y, double w, double h, 
     }
     // corners only depend on distance to the corner center, 1/8 px steps
     double rmax = g.r + ext + 2;
-    int nrad = (int)(rmax * 8) + 2;
+    int nrad = rmax < (1 << 19) ? (int)(rmax * 8) + 2 : 1 << 22;
     uint32_t *rad = nrad < (1 << 22) ? malloc((size_t)nrad * sizeof(uint32_t)) : NULL;
     for (int i = 0; rad && i < nrad; i++) rad[i] = dr_sh_col(&g, col, i / 8.0 - g.r);
     // box symmetric on the pixel grid -> do one corner and mirror it
-    int sym = g.cx > -1e8 && g.cx < 1e8 && g.cy > -1e8 && g.cy < 1e8 && 2 * g.cx == dr_floor(2 * g.cx) && 2 * g.cy == dr_floor(2 * g.cy), cw = (int)rmax + 3, ch = cw;
+    int sym = g.cx > -1e8 && g.cx < 1e8 && g.cy > -1e8 && g.cy < 1e8 && 2 * g.cx == dr_floor(2 * g.cx) && 2 * g.cy == dr_floor(2 * g.cy), cw = rmax < 1024 ? (int)rmax + 3 : 1024, ch = cw;
     int mx2 = sym ? (int)(2 * g.cx) - 1 : 0, my2 = sym ? (int)(2 * g.cy) - 1 : 0, cx0 = dr_fl(g.out.x0), cy0 = dr_fl(g.out.y0);
     uint32_t *cc = sym && rad && cw < 1024 ? malloc((size_t)cw * ch * sizeof(uint32_t)) : NULL;
     for (int i = 0; cc && i < cw * ch; i++) cc[i] = 0x00FFFFFF; // never a premultiplied color
