@@ -6521,7 +6521,7 @@ struct goome_font {
     size_t cells;
     uint8_t *tmp;
     size_t tmpcap;
-    int nseg, bad;
+    int nseg, bad, ncomp;
     int rw, rh;
     uint32_t col;
     uint32_t tab[256];
@@ -6683,7 +6683,7 @@ static int ft_grow(goome_font *f, int pts, int ends)
 
 static int ft_glyf(goome_font *f, int g, int depth)
 {
-    if (g < 0 || g >= f->nglyphs || depth > 8) return 0;
+    if (g < 0 || g >= f->nglyphs || depth > 8 || ++f->ncomp > 4096) return 0;
     uint32_t a, b;
     if (f->locfmt) a = ft_u32(f, f->loca + (uint32_t)g * 4), b = ft_u32(f, f->loca + (uint32_t)g * 4 + 4);
     else a = ft_u16(f, f->loca + (uint32_t)g * 2) * 2, b = ft_u16(f, f->loca + (uint32_t)g * 2 + 2) * 2;
@@ -7135,7 +7135,7 @@ static int ft_cff_glyph(goome_font *f, int g)
 
 static int ft_outline(goome_font *f, int g)
 {
-    f->npts = f->nends = 0;
+    f->npts = f->nends = f->ncomp = 0;
     int ok = f->cff ? ft_cff_glyph(f, g) : ft_glyf(f, g, 0);
     if (!ok) f->npts = f->nends = 0;
     if (f->nends && f->ends[f->nends - 1] != f->npts - 1) f->npts = f->nends = 0;
