@@ -695,12 +695,12 @@ int rand(void)
 
 void qsort(void *base, size_t n, size_t sz, int (*cmp)(const void *, const void *))
 {
-    char *a = base, tmp[64];
-    if (sz > sizeof(tmp)) return;
-    for (size_t i = 1; i < n; i++) {
-        memcpy(tmp, a + i * sz, sz);
-        size_t j = i;
-        for (; j > 0 && cmp(a + (j - 1) * sz, tmp) > 0; j--) memcpy(a + j * sz, a + (j - 1) * sz, sz);
-        memcpy(a + j * sz, tmp, sz);
-    }
+    char *a = base;
+    for (size_t i = 1; i < n; i++)
+        for (size_t j = i; j > 0 && cmp(a + (j - 1) * sz, a + j * sz) > 0; j--)
+            for (size_t k = 0; k < sz; k++) {
+                char t = a[(j - 1) * sz + k];
+                a[(j - 1) * sz + k] = a[j * sz + k];
+                a[j * sz + k] = t;
+            }
 }
