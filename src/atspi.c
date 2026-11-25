@@ -477,6 +477,7 @@ static void as_edit(goome *g, const gm_ax *a, int i, int pos, int del, const cha
     int len;
     const char *t = gm_ax_str(a, i, &len);
     int b0 = gm_ax_bytes(t, len, pos), b1 = gm_ax_bytes(t, len, pos + del);
+    if (b1 < b0) b1 = b0;
     size_t il = ins ? strlen(ins) : 0;
     char *o = malloc((size_t)len + il + 1);
     if (!o) return;
