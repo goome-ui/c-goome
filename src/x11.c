@@ -2244,8 +2244,10 @@ static int x11i_lookup(goome *g, x11_input_ev *k)
         unsigned cp = psym >= 0x20 && psym <= 0xff ? (unsigned)psym : (psym & 0xff000000ul) == 0x01000000ul ? (unsigned)(psym & 0xffffff) : 0;
         if (cp) want[x11_utf8(want, cp)] = 0;
         if (!k->detail || strcmp(want, buf)) {
-            if ((unsigned char)buf[0] >= 32 && buf[0] != 127) gm_ime_push(g, GOOME_TEXT, buf, n, 0);
-            done = 1;
+            if ((unsigned char)buf[0] >= 32 && buf[0] != 127) {
+                gm_ime_push(g, GOOME_TEXT, buf, n, 0);
+                done = 1;
+            }
         }
     }
     if (buf != small) free(buf);
